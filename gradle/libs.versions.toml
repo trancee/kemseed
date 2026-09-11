@@ -1,0 +1,18 @@
+# Version catalog — single source of truth for build plugin/tool versions.
+# Aligned to latest stable at scaffold time (2026-09-10): Gradle 9.7.1, Kotlin 2.4.10, AGP 9.4.0.
+# Re-evaluate held versions every sprint (per AGENTS.md Kotlin toolchain guidance).
+
+[versions]
+kotlin = "2.4.10"
+agp = "9.4.0"
+compileSdk = "36"
+minSdk = "21"
+# targetSdk omitted: AGP 9.x "single-variant" Android-KMP plugin auto-targets compileSdk.
+
+[libraries]
+# No runtime libraries: ADR-0001 zero-external-dependency rule. CSIDH/ML-KEM are Pure-Kotlin;
+# AES-GCM uses native Keystore/CryptoKit. Only the Kotlin stdlib is implicit.
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+android-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
