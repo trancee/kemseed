@@ -130,3 +130,25 @@ restrict `checkKotlinAbi` to macOS or go lenient on Linux), and (iii) Dokka 2.2.
 compatibility must be empirically proven before 0.2.0 (no newer Dokka is published). Kover, AGP,
 KSP, kotlinpoet, Spotless, SKIE compat are all confirmed good. Suggest: ship A+B+C with these
 three issues resolved, then re-run `:pqcble` 1b PDU TDD against `kompact:0.2.0`.
+
+## Proposal v2 review (2026-09-11)
+
+v2 fixes every error from the earlier kompact-fit assessment (read-only). Confirmed-correct claims (ground-truth sources: kompact build files + kotlinlang.org ksp-quickstart/abi-validation docs + gradle.org matrix + gradle/plugin-portal):
+
+- **KSP versioning CORRECT**: kotlinlang `ksp-quickstart` pairs Kotlin **2.4.10 with KSP 2.3.10** — KSP is *not* version-aligned to Kotlin. So `ksp = "2.3.12"` (unchanged) is right; `ksp = "2.4.10"` would fail. (Corrects my own earlier v1 feedback that 2.4.10 was wanted.) ✓
+- **`jvmCommon` shared-actuals restructure CORRECT**: `jvmCommon = creating { dependsOn(commonMain) }`; `jvmMain`/`androidMain` both `dependsOn(jvmCommon)`; `@JvmInline actual` Result/ScalarType/NestedRegionResult/VehicleTelemetry moved there. Intermediate source sets *may* host `actual` declarations that are shared by multiple targets consuming the same `expect` — this is the documented KMP "shared actual" pattern. So "no androidMain of its own" is now TRUE (androidMain exists implicitly and only pulls jvmCommon). ✓
+- **`kotlin { android { namespace; compileSdk; minSdk; compilerOptions } }` DSL** is the AGP-9.4 correct form (not `androidLibrary{}`/`top-level android{}`). ✓
+- **`abiValidation { keepLocallyUnsupportedTargets = false }` ≈ BCV `strictValidation=true`; tasks `checkKotlinAbi`/`updateKotlinAbi`** — confirmed via kotlinlang.org BCV page. ✓
+- **Gradle 9.7.1 + Kotlin 2.4.10** is fine (Kotlin 2.4 compat: "Gradle 7.6.3 through 9.5.0; up to the latest Gradle release with possible warnings") — so v2 §7.6 downgrade-to-9.5.0 fallback is UNNECESSARY. ✓ keep 9.7.1.
+
+### ⚠️ Corrections still needed in v2
+1. **§4.1 item 4 (`kompact-ksp`): "jvmSourcesJar already auto-created by KGP for JVM" — FALSE.** KGP auto-creates `jvmSourcesJar` only for KMP modules (`:kompact`). `kompact-ksp` is `kotlin("jvm")` → NO auto sources jar. It also lacks a javadoc-stub jar. **Fix:** add explicit `sourcesJar` (`Jar` from `kotlin.srcDirs`) + `javadocJar` (README stub, mirroring `:kompact`) tasks and attach to the JVM publication.
+2. **§3.1 misplaced `includeBuild("build-logic")`** — belongs in §4.2 (the convention-plugin extraction of the Portal pipeline), not Change A (Android target). Move it.
+3. **§3.3 vs §7.3 `keepLocallyUnsupportedTargets` muddle** — §3.3 table says "set `true` (default) in build config; macOS strict" but if the *build config* default is `true`, macOS also runs lenient. Resolution: keep `keepLocallyUnsupportedTargets = false` (strict, matching Change E's `strictValidation=true` intent) in the build, and run `checkKotlinAbi` **on macOS only** (full, all targets incl. iOS klibs); on Linux run `checkKotlinAbi` with the default (lenient, infers iOS, still really validates JVM+Android) OR skip abi-check on Linux. Pick one and make §3.3 consistent with §7/§8.
+4. **Task-name verification**: confirm the Android release-artifact task (`assembleReleaseAar` vs `assembleReleaseKotlinAndroid` vs `assembleRelease`) in Step 0.
+
+### 🔴 Residual high-risk (NOT yet resolved — must gate on pre-flight)
+- **Dokka 2.2.0 ↔ Kotlin 2.4.10 metadata compatibility.** The Gradle Plugin Portal latest Dokka is **2.2.0** (26 Mar 2026); Kotlin 2.4.0 shipped 3 Jun 2026. kompact currently runs dokka 2.2.0 on Kotlin 2.3.21 (works). Whether dokka 2.2.0 parses Kotlin-2.4 metadata is unproven, and **no newer Dokka is published to upgrade to**. The macOS CI gate runs `:kompact:dokkaGeneratePublicationHtml` + `git diff --exit-code docs/api/`. **Must verify in Step 0 spike**: run dokka on a Kotlin-2.4.10 build. If it fails, the dokka-sync gate must be deferred (no Dokka upgrade path exists) — unacceptable for a release but tolerable for a 0.2.0-SNAPSHOT dev cycle. Keep this RED until empirical green.
+
+### Bottom line
+v2 covers all KOMPAT-SIDE gaps (Android target, KSP publication, Kotlin-2.4 alignment, BCV→built-in abiValidation, version bump) and fixes the v1 errors. It does **not** cover the pqcble-side blocker (**ADR-0001: zero runtime deps** — that remains pqcble's decision and is necessary-but-not-sufficient; see §kompact-adoption-path above). Three mechanical corrections (kompact-ksp sources/javadoc jar, misplaced includeBuild, the keepLocallyUnsupportedTargets consistency) plus the Dokka-compat pre-flight gate are the only items standing between this proposal and `kompact:0.2.0-SNAPSHOT`.
