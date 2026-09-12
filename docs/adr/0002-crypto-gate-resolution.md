@@ -71,6 +71,28 @@ Replay: #15 cache `key = dir(1) ‖ nonce(8)`, 2^10 / 30 s TTL+LRU; dup ⇒ GMAC
   3. 2-flight latency (negligible vs ≥7.5 ms CI) + DoS surface bounded by caps ≤2 global / 30 s TTL.
 - **Platform facts:** iOS CryptoKit `Curve25519.KeyAgreement` public since iOS 13 (not private — corrects packet-5 §5.3 "private CryptoKit X25519" error); Android `X25519` API 28+. No platform crypto on the default handshake path (Pure-Kotlin CT baseline).
 
+## O3 — 0c implementation notes (AES-256-GMAC + HKDF-SHA3-256)
+
+Recorded to pin the bit-order / transcription conventions that bit this review, so
+implementers never re-derive them from prose.
+
+### AES-256 block cipher — `Aes256.kt`
+- `internal object Aes256 { encryptBlock(key, block): ByteArray }`. Key schedule, S-box/inv-S-box, `RCON` (1-indexed; `RCON[0]=0x00` dummy) match `tiny-AES-c` (256/256) index-for-index; cross-checked against `/opt/homebrew/opt/openssl@3` `enc -aes-256-ecb -nopad` and CPython `cryptography`. KAT: FIPS 197 C.3 (key=`0001…1f`, pt=`00112233…eeff` → ct=`8ea2b7ca516745bfeacf49904b496089`). All CT by construction (table-driven S-box, no data-dependent branches).
+
+### AES-256-GMAC / GHASH — `Gmac.kt`
+- `Gmac.gmacTag(key: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray` with `TAG_SIZE=16`.
+- **GHASH field multiply = NIST SP 800-38D Algorithm 2 in *byte-array* form** (the convention this review got wrong once). 16-byte big-endian blocks; byte 0 = leftmost bit = x⁰ in the NIST bit convention. Per iteration: right-shift the 128-bit `v` by x; on carry (rightmost bit of byte 15) XOR reduction `0xE1` into **byte 0 (the top byte)** — `carry = v[15] & 1; v = v >> 1; if carry: v[0] ^= 0xE1`. Bit scan is MSB-first: bit `i` of block `x` = bit `(128 - i)` = `x[i >> 3] >> (7 - (i and 7)) & 1` (i=0 ⇒ byte 0 MSB).
+- **Equivalent to the textbook schoolbook multiply** `bitrev(naive_int_mul(bitrev(X), bitrev(Y)))`. Proven on 2000 random `(X, Y)` pairs (0 mismatches) and reproduces 400/400 random AES-GCM vectors (OpenSSL-backed `cryptography.AESGCM`, varied AAD/ciphertext lengths incl. non-block-aligned).
+- **GHASH structure = the standard NIST GCM ordering** (fold `pad(aad) ‖ pad(ct) ‖ [len block]`, then `T = Y ⊕ AES-256-ECB(J0)`, J0 = IV‖0x00000001 for 96-bit IV). The earlier "GHASH fails" was a *test-harness/IV bug*, not a multiply/ordering bug: (a) the KAT IV is the contiguous `00..0b` sequence (0x0a0b), **not** `…1011` — the ADR §3 draft text transcribed `0a0b` as `1011`; (b) the harness at times fed *plaintext* into GHASH instead of AES-GCM's *ciphertext* and/or passed a raw 20-byte AAD as one unpadded block instead of `pad(aad)+pad(ct)+[len]`. The golden `b399331ea4d8694509a45ce7316a4450` is the oracle output for IV `0001020304050607 08090a0b`. The protocol GCM IV (ADR-0002 §3: `0x11 ‖ direction(1) ‖ nonce(8) ‖ 0x00 0x00`) is a separate 96-bit value fed as the IV; GMAC is over `epk` (both flights, transcript-bound).
+- `Gmac.kt` uses exactly the verified byte-array multiply (`ghashMul` / `ghostBit` / `ghashRightShift1`); `ghashRightShift1` shifts byte 15→0 right by one bit position, `ghashBit` is MSB-first, reduction XORs `0xE1` into byte 0.
+- **KAT goldens (OpenSSL-backed `AESGCM(key).encrypt(iv, b"", aad)`):** A1 key=`00…1f`, iv=`000102030405060708090a0b`, aad=`00112233445566778899aabbccddeeff`, tag=`b399331ea4d8694509a45ce7316a4450`; A2 key=`2b7e1516…cf4f`×2, iv=`000000000000000000000001`, aad=`0102…ef 0011…ff`(2 blks), tag=`09442d7731aaaa9eb3dafc0debcd3784`; A3 same key, iv=`…00000002`, aad=empty, tag=`4112e5eaddb044afcc021c361bce94f1`.
+
+### HKDF over HMAC-SHA3-256 — `Hkdf.kt`
+- `internal object Hkdf { HASH_SIZE=32, BLOCK_SIZE=136 (SHA3-256 rate); hmac(key,msg); extract(salt,ikm); expand(prk,info,outputLen); extractThenExpand(...) }`. HMAC = RFC 2104 over `Keccak.sha3_256` (FIPS 202, domain sep `0x06`), block size = rate = 136 B. Keys > 136 B are pre-hashed; shorter keys zero-padded to 136; `ipad`=0x36, `opad`=0x5c.
+- `extract`: `PRK = HMAC-Hash(salt, IKM)`; a NULL/empty salt is replaced by `HASH_SIZE=32` zero bytes (RFC 5869 §2.2 — note: HMAC with a 32-zero key and a 136-zero block key are identical because HMAC left-pads short keys to the block, so the empty-key and 32-zero-key cases collapse — verify, don't assume).
+- `expand`: `T(0)=ε`, `T(i)=HMAC(PRK, T(i-1)‖info‖[i])` with `[i]` a single byte 1..255; `outputLen ≤ 255·HASH_SIZE` else `IllegalArgumentException` (RFC 5869 §2.3).
+- **KAT goldens:** RFC 5869 §B Test Cases 1/2/3 fixtures with SHA3-256 as HKDF's hash (inputs cited from RFC 5869; outputs computed by the validated oracle = hand-rolled HKDF ≡ Python `hashlib`+`hmac` and `cryptography.HKDF(SHA3_256)`, byte-for-byte). NB an earlier session summary cited an unrecorded golden `f1d799b5…` (PRK `294584dc…`) whose inputs were never persisted; it matches no RFC 5869 §B SHA3-256 fixture, so it is *not* a reproducible vector — do not use it. The committed `HkdfTest` targets the oracle's actual output on the cited RFC fixtures.
+
 ## Notes / follow-ups (documented, not stale TODOs)
 - Back-annotate §4.6/§5.3 corrections + the "PFS-achieved under E1′" status into `issues/05`/`issues/16`/`issues/17` so those files don't carry superseded "ML-KEM = non-PQ" / "PFS flag open" claims.
 - `#10` Pure-Kotlin CT spike (`CsidhCtFieldSpike.kt`, p=2^255−19) is now **reused** as the X25519 Montgomery-ladder arithmetic base (repurposed, not dead).
