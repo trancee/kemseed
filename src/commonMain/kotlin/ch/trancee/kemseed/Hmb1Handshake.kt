@@ -94,7 +94,10 @@ internal object Hmb1Handshake {
         data class Err(val reason: Reject) : DeriveResult
     }
 
-    /** #15 freshness cache keyed by `dir ‖ nonce`: 2^10 entries, 30 s TTL, LRU eviction. */
+    /** #15 freshness cache keyed by `dir ‖ nonce`: 2^10 entries, 30 s TTL.
+     * Eviction is insertion-order: oldest *live* entry drops first. This is LRU-equivalent
+     * here because a replay hit is rejected without re-insertion, so least-recently-inserted
+     * live == least-recently-used live. */
     class ReplayCache(
         private val capacity: Int = CACHE_CAPACITY,
         private val ttlMs: Long = CACHE_TTL_MS,
@@ -123,7 +126,7 @@ internal object Hmb1Handshake {
             override fun hashCode(): Int = b.contentHashCode()
         }
 
-        /** Insertion-ordered (LinkedHashMap) => `keys.first()` is the least-recently inserted live entry. */
+        /** Insertion-ordered (LinkedHashMap) => oldest *live* entry is `keys.first()`. */
         private val entries: MutableMap<BytesKey, Long> = linkedMapOf()
     }
 
