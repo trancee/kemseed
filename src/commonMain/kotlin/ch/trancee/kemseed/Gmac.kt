@@ -1,45 +1,40 @@
 package ch.trancee.kemseed
 
 /**
- * AES-256-GMAC (NIST SP 800-38D GCM with empty plaintext): the integrity+authenticity
- * tag carried on the airborne element (`Packet_A1`/`Packet_A2`, ADR-0002 §3).
+ * AES-256-GMAC / AES-256-GCM GHASH primitives (NIST SP 800-38D Algorithms 2 & 3).
  *
- * GMAC(key, iv, aad) = GCM(key, iv, aad, plaintext=""):
- *   H  = AES-256(0^128)                        // hash subkey
- *   J0 = iv || 0x00000001                       // 96-bit IV => one counter block
- *   Y  = GHASH_H(aad_pad || len)               // len = [len(aad) bits]_64 || [0]_64
- *   T  = Y XOR AES-256(J0)
+ * GMAC is GCM with an empty plaintext (the integrity+authenticity tag carried on
+ * the airborne element: `Packet_A1`/`Packet_A2`, E1′ handshake ADR-0002 §3). The
+ * GHASH field multiplication below is the verified core reused by full
+ * AES-256-GCM (`Aes256Gcm`) so the GCM multiply is implemented exactly once.
  *
- * Pure-Kotlin, commonMain (KMP: android + iosArm64). No `java.*`, no `clone()`.
+ * GHASH field multiply is the NIST SP 800-38D Algorithm 2 form: 16-byte
+ * big-endian blocks (byte 0 = leftmost bit = x^0, the NIST bit convention),
+ * right-shift by x, reduction polynomial x^128 + x^7 + x^2 + x + 1 applied as
+ * XOR `0xE1` into byte 0 (the high byte) on overflow. Byte-for-byte
+ * equivalence was checked against `cryptography.hazmat.AESGCM` (OpenSSL-backed)
+ * on 400 random GCM vectors plus the GMAC known-answer tests in [GmacTest]; the
+ * GHASH multiply was further cross-checked against a textbook GF(2^128)
+ * schoolbook multiply (bit-reversed isomorphism) on 2000 random pairs
+ * (0 mismatches).
  *
- * GHASH field multiply is the NIST SP 800-38D Algorithm 2 form: 16-byte big-endian
- * blocks (byte 0 = leftmost bit = x^0, the NIST bit convention), right-shift by x,
- * reduction polynomial x^128 + x^7 + x^2 + x + 1 applied as XOR `0xE1` into byte 0
- * (the high byte) on overflow. Byte-for-byte equivalence was checked against
- * `cryptography.hazmat.AESGCM` (OpenSSL-backed) on 400 random GCM vectors plus the
- * GMAC known-answer tests in [GmacTest]; the GHASH multiply was further cross-checked
- * against a textbook GF(2^128) schoolbook multiply (bit-reversed isomorphism) on
- * 2000 random pairs (0 mismatches).
- *
- * CT posture: the 128-bit GHASH accumulator runs in fixed 128-iteration loops with
- * data-independent control flow. AES-256 S-box table reads are a documented
- * cache-timing surface (ADR-0002 §5.2) — not a GMAC correctness blocker.
+ * CT posture: the 128-bit GHASH accumulator runs in fixed 128-iteration loops
+ * (via [ghashMul]) with data-independent control flow. AES-256 S-box table
+ * reads are a documented cache-timing surface (ADR-0002 §5.2).
  */
 internal object Gmac {
 
-    private const val BLOCK_SIZE: Int = Aes256.BLOCK_SIZE
+    internal const val BLOCK_SIZE: Int = Aes256.BLOCK_SIZE
     private const val GCM_IV_SIZE: Int = 12
     internal const val TAG_SIZE: Int = BLOCK_SIZE
+    private val EMPTY: ByteArray = ByteArray(0)
 
-    /** GHASH field multiply Z = X · H over GF(2¹²⁸) (NIST SP 800-38D Alg. 2).
-     *
-     * [x] and [h] are 16-byte big-endian blocks; byte 0 is the leftmost bit (the
-     * NIST convention, i.e. the most-significant bit of byte 0 carries x⁰). Returns
-     * a fresh 16-byte block; inputs are not mutated. */
+    // ---- GHASH field arithmetic: NIST SP 800-38D Algorithm 2 ----
+    // byte 0 = leftmost bit = x^0 (NIST convention); reduction 0xE1 into byte 0.
     private fun ghashMul(x: ByteArray, h: ByteArray): ByteArray {
         val z = ByteArray(BLOCK_SIZE)
-        val v = h.copyOf()
-        for (i in 0 until 128) {            // bit position left→right (x⁰ … x¹²⁷)
+        val v = h.copyOf()           // operands are not mutated
+        for (i in 0 until 128) {     // bit position left→right (x⁰ … x¹²⁷)
             if (ghashBit(x, i) == 1) {
                 for (j in 0 until BLOCK_SIZE) z[j] = (z[j].toInt() xor v[j].toInt()).toByte()
             }
@@ -67,41 +62,86 @@ internal object Gmac {
         a[0] = ((a[0].toInt() and 0xFF) ushr 1).toByte()
     }
 
-    /** 16-byte AES-256-GMAC tag for [aad] under [key], 96-bit [iv]. */
-    internal fun gmacTag(key: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray {
-        require(iv.size == GCM_IV_SIZE) { "GMAC/GCM IV must be 96 bits ($GCM_IV_SIZE bytes); got ${iv.size}" }
-        require(key.size == Aes256.KEY_SIZE) { "GMAC key must be ${Aes256.KEY_SIZE} bytes; got ${key.size}" }
-
-        // H = AES-256(0^128)
-        val h = Aes256.encryptBlock(key, ByteArray(BLOCK_SIZE))
-
-        // J0 = iv || 0x00 || 0x00 || 0x00 || 0x01  (96-bit IV, big-endian counter)
-        val j0 = ByteArray(BLOCK_SIZE)
-        for (i in 0 until GCM_IV_SIZE) j0[i] = iv[i]
-        j0[BLOCK_SIZE - 1] = 1.toByte()
-
-        // GHASH input: AAD padded up to a whole-block (zero-pad) boundary, then
-        // the 16-byte length block [ len(aad) bits | 0 bits ] (empty plaintext).
-        val aadLenPad = (BLOCK_SIZE - (aad.size % BLOCK_SIZE)) % BLOCK_SIZE
-        val padded = ByteArray(aad.size + aadLenPad) { i ->
-            if (i < aad.size) aad[i] else 0.toByte()
+    /** GHASH_H polynomial-evaluation fold over [blocks] (length must be a non-zero
+     *  multiple of [BLOCK_SIZE]): the standard GCM/GMAC chaining `Y = (Y ⊕ Bᵢ) · H`.
+     *  Fixed 16-byte steps with data-independent control flow. */
+    private fun ghashFold(h: ByteArray, blocks: ByteArray): ByteArray {
+        require(blocks.size % BLOCK_SIZE == 0 && blocks.size >= BLOCK_SIZE) {
+            "GHASH fold input must be a non-empty multiple of $BLOCK_SIZE bytes; got ${blocks.size}"
         }
-        val lenBlock = ByteArray(BLOCK_SIZE)            // len(ct)=0 ⇒ low 8 bytes are 0
-        val bitLen = aad.size.toLong() * 8
-        for (i in 0 until 8) lenBlock[i] = ((bitLen ushr (56 - i * 8)) and 0xFF).toByte()
-
         var y = ByteArray(BLOCK_SIZE)
-        for (i in padded.indices step BLOCK_SIZE) {
-            for (j in 0 until BLOCK_SIZE) y[j] = (y[j].toInt() xor padded[i + j].toInt()).toByte()
+        var i = 0
+        while (i < blocks.size) {
+            for (j in 0 until BLOCK_SIZE) y[j] = (y[j].toInt() xor blocks[i + j].toInt()).toByte()
             y = ghashMul(y, h)
+            i += BLOCK_SIZE
         }
-        for (j in 0 until BLOCK_SIZE) y[j] = (y[j].toInt() xor lenBlock[j].toInt()).toByte()
-        y = ghashMul(y, h)
-
-        // T = Y XOR AES-256(J0)
-        val s = Aes256.encryptBlock(key, j0)
-        val tag = ByteArray(BLOCK_SIZE)
-        for (j in 0 until BLOCK_SIZE) tag[j] = (y[j].toInt() xor s[j].toInt()).toByte()
-        return tag
+        return y
     }
+
+    /** Right-zero-pad [b] up to a whole [BLOCK_SIZE] boundary (GCM pads AAD/CT blocks). */
+    private fun padToBlockLen(b: ByteArray): ByteArray {
+        val pad = (BLOCK_SIZE - (b.size % BLOCK_SIZE)) % BLOCK_SIZE
+        if (pad == 0) return b.copyOf()
+        return b.copyOf() + ByteArray(pad)
+    }
+
+    /** 16-byte length block `[ bitlen(aad) ‖ bitlen(ct) ]`, each big-endian 64-bit
+     *  (NIST SP 800-38D §3.4 / Algorithm 2 length encoding). */
+    private fun lenBlock(aad: ByteArray, ct: ByteArray): ByteArray {
+        val block = ByteArray(BLOCK_SIZE)
+        val aadBits = aad.size.toLong() * 8
+        val ctBits = ct.size.toLong() * 8
+        for (i in 0 until 8) {
+            block[i] = ((aadBits ushr (56 - i * 8)) and 0xFF).toByte()
+            block[8 + i] = ((ctBits ushr (56 - i * 8)) and 0xFF).toByte()
+        }
+        return block
+    }
+
+    private fun xor16(a: ByteArray, b: ByteArray): ByteArray {
+        val r = ByteArray(BLOCK_SIZE)
+        for (i in 0 until BLOCK_SIZE) r[i] = (a[i].toInt() xor b[i].toInt()).toByte()
+        return r
+    }
+
+    /** J0 for a 96-bit IV: `iv ‖ 0x00 0x00 0x00 0x01` (the 32-bit counter's initial
+     *  value; byte[15] is the counter LSB, matching the OpenSSL/BoringSSL GCM IV form
+     *  frozen in ADR-0002 §3). */
+    internal fun j0(iv: ByteArray): ByteArray {
+        require(iv.size == GCM_IV_SIZE) { "GCM IV must be 96 bits ($GCM_IV_SIZE bytes); got ${iv.size}" }
+        val block = ByteArray(BLOCK_SIZE)
+        for (i in 0 until GCM_IV_SIZE) block[i] = iv[i]
+        block[BLOCK_SIZE - 1] = 1.toByte()
+        return block
+    }
+
+    /** Inc32 (NIST SP 800-38D §6.2): increment the rightmost 32 bits of [block].
+     *  Byte[15] is the LSB with carry propagating to byte[12] (OpenSSL/BoringSSL
+     *  direction) — the first GCM keystream block is `AES(Inc32(J0))`. */
+    internal fun inc32(block: ByteArray): ByteArray {
+        require(block.size == BLOCK_SIZE) { "inc32 operates on a 128-bit block; got ${block.size}" }
+        val r = block.copyOf()
+        for (i in (BLOCK_SIZE - 1) downTo (BLOCK_SIZE - 4)) {
+            val v = (r[i].toInt() and 0xFF) + 1
+            r[i] = (v and 0xFF).toByte()
+            if (v <= 0xFF) break
+        }
+        return r
+    }
+
+    /** AES-256-GCM/GMAC authentication tag for `aad ‖ ct` under [key] with 96-bit [iv]:
+     *  `T = GHASH_H(pad(aad) ‖ pad(ct) ‖ lenBlock(aad,ct)) XOR AES-256(J0)`. */
+    internal fun gcmAuthTag(key: ByteArray, iv: ByteArray, aad: ByteArray, ct: ByteArray): ByteArray {
+        require(key.size == Aes256.KEY_SIZE) { "GCM key must be ${Aes256.KEY_SIZE} bytes; got ${key.size}" }
+        val h = Aes256.encryptBlock(key, ByteArray(BLOCK_SIZE))
+        val j0 = j0(iv)
+        val y = ghashFold(h, padToBlockLen(aad) + padToBlockLen(ct) + lenBlock(aad, ct))
+        val s = Aes256.encryptBlock(key, j0)
+        return xor16(y, s)
+    }
+
+    /** AES-256-GMAC tag = GCM tag with an empty plaintext (`gcmAuthTag(key, iv, aad, ∅)`). */
+    internal fun gmacTag(key: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray =
+        gcmAuthTag(key, iv, aad, EMPTY)
 }
