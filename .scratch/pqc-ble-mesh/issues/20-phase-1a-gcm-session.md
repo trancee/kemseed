@@ -152,3 +152,57 @@ v2 fixes every error from the earlier kompact-fit assessment (read-only). Confir
 
 ### Bottom line
 v2 covers all KOMPAT-SIDE gaps (Android target, KSP publication, Kotlin-2.4 alignment, BCV→built-in abiValidation, version bump) and fixes the v1 errors. It does **not** cover the pqcble-side blocker (**ADR-0001: zero runtime deps** — that remains pqcble's decision and is necessary-but-not-sufficient; see §kompact-adoption-path above). Three mechanical corrections (kompact-ksp sources/javadoc jar, misplaced includeBuild, the keepLocallyUnsupportedTargets consistency) plus the Dokka-compat pre-flight gate are the only items standing between this proposal and `kompact:0.2.0-SNAPSHOT`.
+
+## Proposal v2 (GFM/Dokka variant) review (2026-09-11)
+
+v2 fixes the KSP-version, `keepLocallyUnsupportedTargets`, and AGP-9-DSL items from the
+earlier review. But two claims are **not reproducible / use non-existent API**:
+
+- **§2 "Step 0 COMPLETED ✅ Verified" / §4.5 Markdown convention plugin:** the cited
+  prototypes `/tmp/dokka-prototype/` and `/tmp/dokka-kmp-prototype/` **do not exist** in
+  this environment (verified `ls` → No such file). The only `/tmp` artifacts from this
+  session are AES-crypto files (`tiny_aes.c`, `gen_sbox.py`, `aesref.py`,
+  `gmac_test.py`, `sbox_tables.txt`). So the Dokka+GFM verification is **not backed by
+  evidence I can reproduce** — the "Worker log: Loaded plugins: …, GfmPlugin" output is
+  not from a run I executed.
+- **§4.5 code uses non-Dokka-2.2.0 API:**
+  - `formatName = "markdown"` — the Dokka GFM/markdown format id is `gfm`, not `markdown`.
+  - `tasks.named("dokkaGeneratePublicationMarkdown")` — DGP v2 task names are
+    `dokkaGeneratePublicationHtml` / `dokkaGeneratePublicationJavadoc` (+ `dokkaGenerate`);
+    there is no `…Markdown` task. GFM follows `dokkaGeneratePublicationGfm` (Alpha).
+  - `DokkaFormatPlugin(formatName=…)` + `DokkaFormatPlugin.DokkaFormatPluginContext` +
+    `formatDependencies.dokkaPublicationPluginClasspathApiOnly.dependencies.addLater(…)`
+    + the `dokka(…)` helper are **not** the documented surface (kotlinlang.org DGP docs).
+  - **Correct GFM approach** (DGP v2, no custom subclass needed):
+    ```kotlin
+    plugins { id("org.jetbrains.dokka") version "2.2.0" }
+    dependencies { dokkaPlugin("org.jetbrains.dokka:gfm-plugin:2.2.0") }
+    tasks.named("dokkaGeneratePublicationGfm") {   // verify exact name in Step 0
+      outputDirectory.set(layout.projectDirectory.dir("docs/api"))
+    }
+    ```
+    Caveat: GFM/Markdown is **Alpha** in Dokka 2.2.0 (per README) — higher risk for a
+    committed `git diff --exit-code docs/api/` CI gate.
+
+### Remaining (still-open) issues not fixed by v2
+1. **§4.1 item 4:** "jvmSourcesJar already auto-created by KGP for JVM" — still FALSE.
+   `kotlin("jvm")` does not auto-create a sources jar; kompact-ksp needs an explicit
+   `sourcesJar` + `javadocJar`(README stub). (v2 keeps the erroneous claim.)
+2. **§3.3/§5.3/§11 #9:** "Gradle 9.7.1 outside KGP 2.4.10 fully-supported range; fallback 9.5.0."
+   STALE — kompact wrapper is 9.7.1; gradle.org matrix = Gradle 9.7.0 ↔ Kotlin 2.4.0
+   ("tested with Kotlin 2.0.0–2.4.20-Beta1"; Gradle up to latest). Remove the fallback.
+
+### Recommendation
+**Decouple the GFM/Dokka-format switch from the 0.2.0 consumer-enablement PR.** Keep
+Dokka HTML output + the existing `docs/api/` HTML sync gate as today (HTML is stable/
+beta-confirmed); ship A+B+C+D+E (Android target, KSP publish, Kotlin 2.4.10, abiValidation
+migration, version bump) on their own. Put the GFM-Markdown switch in a **separate,
+opt-in** task verified against the real `dokkaGeneratePublicationGfm` task name
+(empirically, in a real Step-0 — not prototypes that don't exist). Rationale: the GFM
+switch is the only item whose verification is fabricated, and GFM is Alpha — not worth a
+real-release CI gate. The consumer-enablement (the whole point) has zero dependency on
+output format.
+
+Bottom line: v2's **build/toolchain changes (A/B/C/D/E) are correct** (once the two
+stale items above are dropped). The **Dokka/GFM material is unverified + uses wrong API**
+and must be de-scoped or properly re-done before approval.
