@@ -52,3 +52,81 @@ The kompact adoption path (A+B+C + P1+P2) is real cross-repo release work (Andro
 - [x] 1a: AES-256-GCM `seal`/`open` byte-exact vs OpenSSL `AESGCM` oracle (4 vectors) + GMAC-consistency + tamper/reject (14 tests green).
 - [x] `Gmac` refactor (green: GmacTest 5/5).
 - [ ] 1b: AD-PDU envelope + Phase-B first data packet (data-nonce frozen by #08 §1.6; PDU framing/ACK per #14 — owner sign-off on seqno-width/AAD/ACK defaults above).
+
+## Proposal review (2026-09-11)
+
+Review of the "pqcble consumer enablement" proposal for `../kompact` (Changes A–E).
+Ground-truth sources: `kompact/kompact/build.gradle.kts`, `kompact/kompact-ksp/build.gradle.kts`,
+`kompact/settings.gradle.kts`, `kompact/gradle/libs.versions.toml`, `kompact/.github/workflows/ci.yml`,
+`kompact/gradle/wrapper/gradle-wrapper.properties` (Gradle 9.7.1), and official docs
+(kotlinlang.org `gradle-binary-compatibility-validation.html`, AGP 9.0/Kotlin compat matrix,
+gradle.org compatibility matrix, Gradle Plugin Portal).
+
+### ✅ Verified correct
+- **Change A key decision**: `com.android.kotlin.multiplatform.library` (AGP 9.x) is the correct
+  plugin for a KMP library — `com.android.library` + KMP is no longer allowed (Android/AGP 9.0 blog).
+- **Change E**: built-in `abiValidation { keepLocallyUnsupportedTargets = false }` ≈ BCV
+  `strictValidation = true`; tasks `checkKotlinAbi`/`updateKotlinAbi`; opt-in
+  `@OptIn(ExperimentalAbiValidation::class)`; DSL is on `KotlinMultiplatformExtension` so it
+  covers the new Android KMP-library target too. Golden-file regeneration path is correct.
+- **Compat**: Kotlin 2.4 → AGP ≥8.5.2 (AGP 9.4.0 ✅); KSP no longer version-locked to Kotlin since 2.3.0 (so `ksp="2.4.10"` is fine); Kover 0.9.9 (created 2026-07-17) is contemporary with Kotlin 2.4.10 (2026-07-14) ✅; kotlinpoet 2.4.0 is KMP-capable ✅; Spotless 8.10.2 / SKIE 0.10.14 are Kotlin-version-independent ✅.
+
+### ✏️ Corrections required
+- **Change A, §2.1 / §2.2 "No new `androidMain` source set is required" — FALSE.**
+  The 7 result value classes are `public expect value class` in `commonMain` with `actual` in
+  **per-target** source sets: `@JvmInline actual` in `jvmMain`, plain `actual value class` in
+  `iosMain`. With `applyDefaultHierarchyTemplate=false`, adding `android()` creates a separate
+  `androidMain` source set — it will **not** see `jvmMain`'s `actual` declarations and the build
+  fails with "expected X has no actual in androidMain". Required fix:
+  `sourceSets { getByName("androidMain") { dependsOn(getByName("jvmMain")) } }` (share the JVM
+  `@JvmInline` actuals) — this is the idiomatic KMP "JVM+Android share actuals" pattern. Also,
+  `JvmCoveragePinning.java` (in `jvmMain`, Kover scaffolding) would leak into the Android artifact
+  via the `dependsOn` — exclude it from the Android jar/AAR (`android.packaging.excludes` or a
+  shared intermediate source set). This must be verified by `:kompact:assembleReleaseAar` +
+  `check`.
+- **Change A, §2.3 risk row "Gradle 9.7.1 outside Kotlin 2.4.0's tested range (7.6.3–9.5.0)"
+  is STALE and should be DELETED.** kompact's own `gradle-wrapper.properties` pins Gradle 9.7.1,
+  and gradle.org's official matrix maps Gradle 9.7.0 ↔ Kotlin 2.4.0 (and "Gradle tested with
+  Kotlin 2.0.0–2.4.20-Beta1"). AGP 9.4.0 needs Gradle ≥9.1 (satisfied). No risk.
+- **Change C compat table "Dokka 2.2.0 supports Kotlin 2.4.10 = ✅ — UNVERIFIED, likely wrong.**
+  The Gradle Plugin Portal lists Dokka's **latest as 2.2.0 (created 2026-03-26)**; kompact's
+  `libs.versions.toml` pins `dokka = "2.2.0"`. Kotlin 2.4.0 shipped 2026-06-03, ~2.5 months
+  *after* Dokka 2.2.0. kompact currently runs dokka 2.2.0 on Kotlin 2.3.21 (works), but bumping
+  to 2.4.10 risks incompatible K2 metadata parsing. kompact CI gates on
+  `:kompact:dokkaGeneratePublicationHtml` + `git diff --exit-code kompact/docs/api/` (macOS only).
+  **Required**: empirically run `:kompact:dokkaGeneratePublicationHtml` against a Kotlin-2.4.10
+  metadata build *before* cutting 0.2.0. Fallback if it breaks: no newer Dokka exists on the
+  portal, so either (a) keep the docs-sync CI gate on hold until a Dokka 2.4.x release appears,
+  or (b) pin the KDoc sources only and regenerate docs out-of-band. This is the highest-risk
+  item in the proposal and must not be `✅` untested.
+- **Change B §3.1 items 4–5 confirmed needed**: kompact-ksp has only `tasks.jar` (no `sourcesJar`/
+  `javadocJar`). But kompact-ksp is `kotlin("jvm")` (not KMP), so it has no KSP-generated
+  `jvmSourcesJar`/`dokkaJavadocJar` — these must be hand-written (`Jar` tasks + dokka README-stub
+  jar). Correct as specified; verify with `generateChecksums` dry-run.
+- **`kotlin-mpp` / `kotlin-android` migration flag**: Kotlin 2.4.0 removed legacy Android source-set
+  layout (`kotlin.mpp.androidSourceSetLayoutVersion=1` is gone) — kompact must not rely on it
+  (it doesn't — `applyDefaultHierarchyTemplate=false` is used). No change, but flag for CI.
+
+### 🚧 New gap surfaced — CI Section (7) breaks under strict mode
+The proposal's Section 7 renames `:kompact:jvmApiCheck` → `:kompact:checkKotlinAbi` on the **Linux**
+`jvm-test` job. With `keepLocallyUnsupportedTargets=false` (the strict mode Change E wants),
+`checkKotlinAbi` validates **all** targets — including `android` — and the Android klib **cannot
+compile on Linux/Ubuntu**. So the Linux CI job fails. The *current* kompact sidesteps this by
+running the per-target `jvmApiCheck` (BCV exposes `jvmApiCheck`/`klibApiCheck`). The built-in
+`abiValidation` does not expose a JVM-only variant the same way. **Required resolution** (pick one):
+- (a) Run `checkKotlinAbi` (strict) on the **macOS** `api-check` job only (which already has the
+  full gate); keep the Linux job abi-free, or
+- (b) Set `abiValidation { keepLocallyUnsupportedTargets = true }` on Linux (lenient inference)
+  and `= false` only on macOS — configurable via `gradle.properties` + per-job init, or
+- (c) Split: `:kompact:checkKotlinAbi` guarded so it only validates targets the host can build.
+  The proposal must choose; option (a) is simplest and matches the existing macOS-full-gate model.
+  `kompact-ksp`'s `:kompact-ksp:checkKotlinAbi` (JVM-only, no klib) is fine on Linux.
+
+### Bottom line
+The proposal is structurally sound and the kompact→pqcble fit is genuine. The blockers that
+block are: (i) Change A needs the `androidMain dependsOn(jvmMain)` source-set fix (with
+`JvmCoveragePinning` exclusion) — non-optional, (ii) the CI strict-mode gap (Section 7 must
+restrict `checkKotlinAbi` to macOS or go lenient on Linux), and (iii) Dokka 2.2.0's Kotlin-2.4
+compatibility must be empirically proven before 0.2.0 (no newer Dokka is published). Kover, AGP,
+KSP, kotlinpoet, Spotless, SKIE compat are all confirmed good. Suggest: ship A+B+C with these
+three issues resolved, then re-run `:pqcble` 1b PDU TDD against `kompact:0.2.0`.
