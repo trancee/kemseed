@@ -26,6 +26,25 @@ Phase-1 materialises #08 §3 Phase D ("AES-256-GCM bidirectional") using those k
 - Goldens from a validated oracle only (`cryptography.AESGCM`); no fabricated values.
 - Zero new runtime deps.
 
+## kompact adoption path (investigated 2026-09-11 — only if owner wants the zero-alloc view layer)
+`../kompact` is purpose-built (zero-alloc `@JvmInline` result reads, lazy `@KompactModel` value-class views, LSB-first bit packing, KMP). For a byte-aligned AD-PDU (seqno/length/ct-tag) bit-order is irrelevant (byte-aligned ⇒ endian-identical), so the conceptual fit is excellent. **But pqcble cannot consume it as-is — three verified gaps:**
+
+1. **No Android target in `:kompact`** (`kompact/build.gradle.kts` lines 31–40: only `jvm{JVM_21}` + `iosArm64()` + `iosSimulatorArm64()`). pqcble ships `android`+`iosArm64`; a KMP consumer resolves per-target klibs, so there is **no `kompact-android` artifact**. kompact cannot satisfy pqcble's Android target.
+2. **`:kompact-ksp` is unpublished.** It has only a plain `publishing{}` (POM "Kompact KSP") with **no** Central Portal pipeline (`centralPortalDeploy`/`generateChecksums`/`assembleCentralBundle` exist only in `:kompact`, not `:kompact-ksp`), and `kompact/references/central-release-report.md` lists **no `kompact-ksp-*` coordinates**. So `@KompactModel` codegen is unavailable to consumers.
+3. **Kotlin version skew**: kompact `libs.versions.toml` pins Kotlin **2.3.21** (KSP 2.3.12); pqcble runs **Kotlin 2.4.10 / AGP 9.4.0**. Mixed klib/stdlib versions risk ABI drift.
+
+### Required kompact-side changes (to fit pqcble Phase-1b)
+- **A. Add an Android target to `:kompact`**: apply `alias(libs.plugins.android.library)`, add `androidLibrary { namespace="ch.trancee.kompact"; compileSdk=36; minSdk=21 }`, declare the `android()` KMP target, and extend `apiValidation { klib/android }` + `publish` to emit `kompact-android` (klib + JVM fallback). (Mirror pqcble's android setup; ADR-0001 minSdk=21.)
+- **B. Ship `:kompact-ksp` to Central**: port the Portal pipeline (`generateChecksums`/`assembleCentralBundle`/`centralPortalDeploy`/`centralPortalStatus`/`centralPortalPublish`) from `:kompact` into `:kompact-ksp`, add `signing` (currently absent), and publish `kompact-ksp-0.1.0` with the `@KompactModel` processor descriptor. (The `com.google.devtools.ksp:symbol-processing-api` + `kotlinpoet` deps are already declared.)
+- **C. Align Kotlin toolchain**: bump kompact `kotlin` → 2.4.10 (and `ksp`/`skie`/`kover`/`dokka`/`bcv` to the 2.4-compatible set pqcble uses) so klibs/stdlib match; re-run 100%-coverage `kover` + strict `bcv` `apiValidation` on all targets.
+
+### Required pqcble-side changes (if kompact adopted)
+- **(P1)** New `ADR-0003` relaxing `ADR-0001` **only for the session/transport layer**: allow `ch.trancee.kompact:kompact` (runtime) + `kompact-ksp` as the single Phase-1 dependency, keeping `kemseed` crypto core strictly zero-dep. OR restructure pqcble into `:kemseed` (crypto) + `:kemseed-session` (depends on kompact).
+- **(P2)** In `kemseed` (or the new session module): add `alias(libs.plugins.ksp)`, depend on `kompact` + `kompact-ksp@0.2.0` (post A/B/C release), and annotate the AD-PDU `@KompactModel value class` with `@KompactField` seqno/dir/length fields over the frozen nonce layout.
+
+### Recommendation
+The kompact adoption path (A+B+C + P1+P2) is real cross-repo release work (Android target, KSP publishing pipeline, Kotlin-2.4 bump, ADR-0001 exception + possible pqcble subproject split). For a minimal, ADR-0001-preserving Phase-1b **now**, hand-roll the PDU envelope in `commonMain` over the committed `Aes256Gcm` (seqno as a 4-byte big-endian counter in the frozen IV `nonce(8)` slot; AAD=`dir‖seqno`; `ct‖tag` blob via `writeBlob`/`readNested`-style length prefix) — zero new deps, no KSP, no Android gap, no version skew. Keep kompact as the **future** zero-alloc view layer once A+B+C land and ADR-0003 is accepted.
+
 ## Result — Phase-1a
 `git log` shows `2cbae34 feat(1a): AES-256-GCM seal/open primitive`. `:testAndroidHostTest` **76/76** (62 prior + 14 new), 0 failures; `:compileKotlinIos` green.
 
