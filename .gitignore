@@ -6,3 +6,5 @@ build/
 local.properties
 .idea/
 .DS_Store
+.codebase-memory/
+*.hprof

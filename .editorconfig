@@ -1,0 +1,15 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 120
+
+# Kotlin (source + Gradle Kotlin DSL). indent_size=4 matches the existing source style
+# and the Kotlin official code style; read by ktfmt (via Spotless) so .kt and .kts stay
+# consistent. Reproducible (Constitution E1): version is pinned in libs.versions.toml.
+[*.{kt,kts}]
+indent_style = space
+indent_size = 4

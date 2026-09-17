@@ -1,21 +1,29 @@
 # Version catalog — single source of truth for build plugin/tool versions.
-# Aligned to latest stable at scaffold time (2026-09-10): Gradle 9.7.1, Kotlin 2.4.10, AGP 9.4.0.
+# Aligned to latest stable at scaffold time (2026-09-10): Gradle 9.7.1, Kotlin 2.4.20, AGP 9.4.0.
 # Re-evaluate held versions every sprint (per AGENTS.md Kotlin toolchain guidance).
 
 [versions]
-kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.1.4 was built with (Maven Central)
+kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.1.6 was built with (Maven Central)
 agp = "9.4.0"
 kompact = "0.1.6"            # 0.1.4 fixed KSP-2.x service-file registration (0.1.1 was on the legacy path
                             # and invisible to KSP 2.x); 0.1.3+ also fixed the codegen round-handling
                             # (process() re-queues) + added per-source-set `kompact.generate` modes
-                            # (common/jvm/ios). Unlicense KMP bit-packing serializer + KSP codegen
-                            # (ch.trancee.kompact, built with Kotlin 2.4.20 like its consumer).
+                            # (common/jvm/ios); 0.1.5 fixed defect #3 (raw ctor val, PR #48); 0.1.6
+                            # fixed defect #4 (actual companion modifier, PR #51). Unlicense KMP
+                            # bit-packing serializer + KSP codegen (ch.trancee.kompact, built w/ Kotlin 2.4.20).
 ksp = "2.3.12"               # KSP version paired with Kotlin 2.4.20 (latest 2.3.x on Maven Central;
-                            # no 2.4.x KSP release exists yet). kompact-ksp 0.1.4 was compiled
+                            # no 2.4.x KSP release exists yet). kompact-ksp 0.1.6 was compiled
                             # against this API (KSP 2.3.x binary-compatible across 2.3.10–2.3.12).
 compileSdk = "36"
 minSdk = "21"
 # targetSdk omitted: AGP 9.x "single-variant" Android-KMP plugin auto-targets compileSdk.
+# Q1 repo gates (Constitution Q1 + AGENTS spotless skill): pinned to latest stable, verified
+# against the Gradle Plugin Portal (spotless) + Maven Central (ktfmt). detekt is NOT wired —
+# deferred (ASK): the io.detekt 1.23.8 Gradle-plugin marker is unresolvable on the Plugin Portal
+# + Maven Central (303→dead `io/detekt` group; no `detekt-gradle-plugin` artifact), so its
+# version/alias is omitted from this catalog until upstream republishes the marker.
+spotless = "8.10.2"          # latest stable; Gradle-9.7-compatible (AGENTS spotless skill).
+ktfmt = "0.64"               # com.facebook:ktfmt latest on Maven Central; pinned for reproducible output.
 
 [libraries]
 # kompact relaxes ADR-0001 §3 (see docs/adr/0003-stack-and-dependency-constraints-kompact-adoption.md):
@@ -32,3 +40,4 @@ kompactKsp = { module = "ch.trancee.kompact:kompact-ksp", version.ref = "kompact
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 android-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
