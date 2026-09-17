@@ -3,16 +3,32 @@
 # Re-evaluate held versions every sprint (per AGENTS.md Kotlin toolchain guidance).
 
 [versions]
-kotlin = "2.4.10"
+kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.1.4 was built with (Maven Central)
 agp = "9.4.0"
+kompact = "0.1.5"            # 0.1.4 fixed KSP-2.x service-file registration (0.1.1 was on the legacy path
+                            # and invisible to KSP 2.x); 0.1.3+ also fixed the codegen round-handling
+                            # (process() re-queues) + added per-source-set `kompact.generate` modes
+                            # (common/jvm/ios). Unlicense KMP bit-packing serializer + KSP codegen
+                            # (ch.trancee.kompact, built with Kotlin 2.4.20 like its consumer).
+ksp = "2.3.12"               # KSP version paired with Kotlin 2.4.20 (latest 2.3.x on Maven Central;
+                            # no 2.4.x KSP release exists yet). kompact-ksp 0.1.4 was compiled
+                            # against this API (KSP 2.3.x binary-compatible across 2.3.10–2.3.12).
 compileSdk = "36"
 minSdk = "21"
 # targetSdk omitted: AGP 9.x "single-variant" Android-KMP plugin auto-targets compileSdk.
 
 [libraries]
-# No runtime libraries: ADR-0001 zero-external-dependency rule. CSIDH/ML-KEM are Pure-Kotlin;
-# AES-GCM uses native Keystore/CryptoKit. Only the Kotlin stdlib is implicit.
+# kompact relaxes ADR-0001 §3 (see docs/adr/0003-stack-and-dependency-constraints-kompact-adoption.md):
+#   - `kompact` runtime = kotlin-stdlib only (zero transitive runtime deps).
+#   - `kompact-ksp` processor is compile-time-only (kotlinpoet-jvm); NOT on the device runtime.
+kompact = { module = "ch.trancee.kompact:kompact", version.ref = "kompact" }
+# camelCase alias (no hyphen) so the catalog emits a flat `libs.kompactKsp` accessor and
+# doesn't nest-`libs.kompact.ksp` (collides with the leaf `kompact` library above).
+kompactKsp = { module = "ch.trancee.kompact:kompact-ksp", version.ref = "kompact" }
+# CSIDH/ML-KEM-X25519 stay Pure-Kotlin; AES-GCM uses native Keystore/CryptoKit for the key
+# store; kompact supplies only the deterministic cross-platform PDU bit-packing.
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 android-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
