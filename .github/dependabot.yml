@@ -1,0 +1,21 @@
+# trancee/kemseed is a Kotlin Multiplatform *library*. Its `gradle/libs.versions.toml`
+# declares a small set of DIRECT dependencies (kompact, kotlin, agp, ksp, spotless,
+# ktfmt). The Gradle graph additionally pulls a large AGP-9.4 transitive crypto
+# toolchain at the build host (bouncycastle bcprov/bcpkix/bcutil, commons-lang3,
+# httpclient, jose4j, jdom2, opentelemetry-api) which Dependabot cannot edit — these
+# are transitive, absent from the manifest — and whose update attempts fail the
+# "Run Dependabot" step (run #35384201629: "The updater encountered one or more errors").
+#
+# Scope Dependabot to DIRECT dependencies only (`allow: dependency-type: direct`) so it
+# only PRs the deps declared in the version catalog and skips AGP's transitive toolchain.
+# Those transitives are build-host-only (not shipped in the KMP AAR) and are advanced
+# via AGP version bumps, not per-dependency PRs.
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"            # single-project Gradle build rooted at repo root
+    schedule:
+      interval: "weekly"      # version-update cadence; security alerts still raise as needed
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: "direct"
