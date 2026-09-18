@@ -14,11 +14,12 @@ import ch.trancee.kompact.runtime.ScalarType
  * processor from this `expect` + the `@KompactField`-annotated accessors below.
  *
  * Read/write accessors use `readBits`/`writeBits` (zero-alloc, LSB-first); the companion
- * `create(...)` delegates to the shared `[encodeAdPduHeader]`. API-stable: `.raw`,
  * `.version`, `.pduType`, `.reserved`, `[encodeAdPduHeader]` are unchanged vs. the prior
- * hand-written actuals. Re-enabling `@KommutModel` here swaps hand-written actuals for
- * generated ones: the 0.1.5 generator fix resolved defect #3 (non-`val` ctor `raw` param,
- * rejected for `@JvmInline value class`) that previously blocked codegen (ADR-0003 §v1.4).
+ * hand-written actuals. `@KommutModel` is ON — the KSP processor generates the platform
+ * actuals (`AdPduHeaderGenJvm`/`AdPduHeaderGenIos`) from this `expect`; the hand-written
+ * platform actuals are deleted. Codegen is unblocked by the upstream fixes: defect #3
+ * (non-`val` ctor `raw` param, fixed in 0.1.5 via PR #48) and defect #4 (missing `actual`
+ * modifier on the generated companion, fixed in 0.1.6 via PR #51) (ADR-0003 §v1.3–v1.5).
  *
  * Layout (`#08` §3 Phase D; ADR-0003 §v1.2), unsigned:
  *   [0..3]  version   (4 bits)  = AD_PDU_VERSION (1)

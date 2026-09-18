@@ -1,16 +1,16 @@
-# ADR-0003 — Adopt kompact 0.1.4 for AD-PDU bit-packing (ADR-0001 relaxation)
+# ADR-0003 — Adopt kompact 0.1.6 for AD-PDU bit-packing (ADR-0001 relaxation)
 
-- **Status:** Accepted — *kompact `0.1.4` runtime + kompact-ksp `0.1.4` adopted. 0.1.4 fixes the KSP-2.x
-  service-file fix (0.1.1) + Defects A (round-handling) and B (expect/actual routing) from v1.2 —
-  the processor LOADS, PARSES, and GENERATES `AdPduHeaderGenJvm.kt`/`AdPduHeaderGenIos.kt` into
-  the correct platform trees (`[mode=JVM]`/`[mode=IOS]`). However 0.1.4 introduces a residual
-  **generator defect #3**: `ValueClassGenerator.buildActual` emits `raw` as a non-`val`
-  constructor parameter plus a body `public actual val raw: ByteArray` with no initializer,
-  which Kotlin rejects for a `@JvmInline value class` (`Value class primary constructor must only
-  have 'val' property parameters`; `Value class cannot have properties with backing fields`;
-  `Property must be initialized or be abstract`). So `@KompactModel` codegen is STILL blocked;
-  the hand-written `expect`/`actual`s ship and `ksp` is wired-but-idle (`@KompactModel` off).*
-- **Date:** 2026-09-13 (adopted v1.0) · 2026-09-14 (kompact-ksp deferred, v1.1) · 2026-09-13 (kompact-ksp 0.1.2 wired, codegen defects A+B found, v1.2) · 2026-09-15 (kompact bumped to 0.1.4, codegen re-attempted live, generator defect #3 found, v1.3)
+- **Status:** Accepted — *kompact `0.1.6` runtime + kompact-ksp `0.1.6` adopted (v1.5). Defects
+  A & B (service-file, round-handling, expect/actual routing — fixed in 0.1.4) and defect #3
+  (non-`val` ctor `raw` param, fixed upstream in 0.1.5 via PR #48) and defect #4 (missing `actual`
+  modifier on the generated companion — fixed upstream in 0.1.6 via PR #51) are **all resolved**.
+  The `mavenLocal()` bridge from v1.4 is **dropped**; the committed tree resolves `kompact` 0.1.6
+  directly from Maven Central. `@KommutModel` codegen is **ON**: the processor LOADS, PARSES, and
+  GENERATES `AdPduHeaderGenJvm.kt`/`AdPduHeaderGenIos.kt` into the correct platform trees with
+  `public actual companion object` + `require(raw.size >= 1)` guards. Hand-written platform
+  `actual`s are **deleted**; only the KSP-generated actuals remain. Green gate: `BUILD SUCCESSFUL
+  in 21s`, `TOTAL tests=94 skipped=0 failures=0 errors=0` (commit `e3e55e5`).*
+- **Date:** 2026-09-13 (adopted v1.0) · 2026-09-14 (kompact-ksp deferred, v1.1) · 2026-09-13 (kompact-ksp 0.1.2 wired, codegen defects A+B found, v1.2) · 2026-09-15 (kompact bumped to 0.1.4, codegen re-attempted live, generator defect #3 found, v1.3) · 2026-09-16 (kompact bumped to 0.1.5, defect #3 fixed upstream PR #48, defect #4 patched via mavenLocal bridge, v1.4) · 2026-09-17 (kompact bumped to 0.1.6, defect #4 fixed upstream PR #51, bridge dropped, codegen GREEN, v1.5)
 - **Deciders:** project (trancee = kompact author; pqcble = consumer on Kotlin 2.4.20 / AGP 9.4.0 / Gradle 9.7.1)
 - **Context ref:** `PROMPT.md` §1.b (Phase-1b AD-PDU envelope) + `.scratch/pqc-ble-mesh/issues/08-prototype-spec-outline.md` §1.6/§3 (Phase D)
 
@@ -22,17 +22,17 @@ sub-byte fields) that wraps the existing AES-256-GCM seal/open
 (`ch.trancee.kemseed.Aes256Gcm`). Hand-rolled bit-twiddling would drift between the
 Android (JVM) and iOS (Kotlin/Native) backends.
 
-`ch.trancee.kompact:kompact:0.1.4` is a KMP library (The Unlicense) that ships exactly
+`ch.trancee.kompact:kompact:0.1.6` is a KMP library (The Unlicense) that ships exactly
 the Android + iOS target set the protocol commits to, and provides two distinct surfaces:
 
 - A **runtime** of zero-alloc, LSB-first bit-stream primitives (`KompactWriter`,
   `KompactRuntime.readBits/writeBits`, `ScalarType`, `KompactFraming`) — used here.
-- A **KSP processor** (`kompact-ksp` 0.1.4) that validates `@KompactModel` field layout at
+- A **KSP processor** (`kompact-ksp` 0.1.6) that validates `@KompactModel` field layout at
   compile time and emits the platform `actual` value-class accessors
-  (`get() = KompactRuntime.readBits(raw, off, w)`). 0.1.4 fixes the KSP-2.x service-file
-  registration (0.1.1) **and** the 0.1.2 codegen Defects A (round-handling) and B (KMP
-  expect/actual routing) — but its generator still emits an invalid `actual` for the `raw`
-  field (defect #3 below).
+  (`get() = KompactRuntime.readBits(raw, off, w)`). 0.1.6 resolves all prior generator defects
+  (A/B service-file + round-handling + expect/actual routing fixed in 0.1.4; defect #3 non-`val`
+  ctor `raw` fixed upstream in 0.1.5 via PR #48; defect #4 missing `actual` on the generated
+  companion fixed upstream in 0.1.6 via PR #51) — see the amendment history for the defect log.
 
 `kompact` (runtime) has **zero transitive runtime dependencies** (kotlin-stdlib only).
 The processor (`kompact-ksp`) is compile-time-only (kotlinpoet-jvm 2.4.0).
@@ -230,31 +230,44 @@ targets (`/opt/homebrew/bin/gradle :testAndroidHostTest :compileKotlinIos --reru
 - **Kotlin / toolchain:** 2.4.20 / AGP 9.4.0 / Gradle 9.7.1 / JDK 25 (required by kompact runtime).
 - **KMP expect/actual flag:** `-Xexpect-actual-classes` retained (kompact's published runtime
   declares `expect`/`actual` value classes e.g. `ScalarType` consumed on iosArm64).
-- **Upstream-fix dependency:** re-enabling `@KompactModel` is blocked on trancee fixing generator
-  defect #3 (`ValueClassGenerator.buildActual` must declare `actual val raw` on the primary
-  constructor, not as a body property) + resolving the ios-binding anomaly (`add("kspIos", …)` does
-  not load the processor on `kspKotlinIos`). A+B are fixed in 0.1.4. Tracked as the gating items;
-  hand-written accessors are byte-identical to codegen output, so no behavioral regression when
-  flipped.
+- **Upstream-fix dependency (RESOLVED in v1.5):** defect #3 fixed upstream in 0.1.5 (PR #48) and
+  defect #4 fixed upstream in 0.1.6 (PR #51) — both now in the committed tree. The ios-binding
+  anomaly is resolved by the Stage-2 `kspKotlinIosProcessorClasspath` binding + per-task
+  `kompact.generate=ios` mode routing (`AdPduHeaderGenIos.kt` now generates correctly).
+  `@KommutModel` codegen is ON; hand-written actuals are deleted.
 
-## Migration (applied)
+## Migration — current state (kompact 0.1.6)
 
-- `gradle/libs.versions.toml`: `kotlin=2.4.20`, `agp=9.4.0`, `kompact=0.1.4`, `kompactKsp=0.1.4`,
-  `ksp=2.3.12`; `kompact`/`kompactKsp`/`ksp` references retained (ksp wired-but-idle).
+> **Provenance (attribution):** the KSP build wiring listed below — the `ksp` plugin; root
+> `dependencies { kspAndroid(libs.kompactKsp) }`; the `afterEvaluate` bindings `add("kspIos", …)`
+> + `add("kspKotlinIosProcessorClasspath", …)` (binds the processor to the ios KSP task
+> classpath); the per-task `kompact.generate=jvm|ios` routing via
+> `KspAATask.commandLineArgumentProviders`; `commonMain` `implementation(libs.kompact)`;
+> `-Xexpect-actual-classes` on common/android/ios; and the absence of any `mavenLocal()` mirror —
+> is the **committed state at base `5cbaf7c`** ("Stage 2: enable KSP codegen of AdPduHeader
+> expect; drop hand-written platform actuals") and is **unchanged by v1.5**. v1.5 = commit
+> `e3e55e5` ("Bump kompact 0.1.5 -> 0.1.6"), a **version-only** bump (`kompact`/`kompactKsp`
+> 0.1.5 → 0.1.6) that pulls the upstream defect-#4 fix (PR #51); it introduces **no build-logic
+> change** vs `5cbaf7c`, which already had codegen ON and dropped the `mavenLocal()` bridge.
+
+- `gradle/libs.versions.toml`: `kotlin=2.4.20`, `agp=9.4.0`, `kompact=0.1.6`, `kompactKsp=0.1.6`,
+  `ksp=2.3.12`; ksp wired-**on** (codegen active, see §Decision).
 - `build.gradle.kts`: `ksp` plugin applied; root `dependencies {}` binds
-  `kspAndroid(libs.kompactKsp)` + `afterEvaluate { add("kspIos", libs.kompactKsp) }`;
-  `commonMain` `implementation(libs.kompact)`; `-Xexpect-actual-classes` on common/android/ios.
-- `AdPduHeader.kt` (commonMain): plain `expect value class AdPduHeader(raw: ByteArray)` (no
-  `@KompactModel`) — abstract `version`/`pduType`/`reserved` + `encodeAdPduHeader` + `PduType`
-  enum + `AD_PDU_VERSION`/`AD_PDU_HEADER_BITS` constants. `@KompactModel` left off (see §Decision).
-- `AdPduHeader.kt` (androidMain): `@JvmInline actual value class` with `KompactRuntime.readBits`
-  getters (version:0/4, pduType:4/3, reserved:7/1).
-- `AdPduHeader.kt` (iosMain): plain `actual value class` with the same `readBits` getters
-  (no `@JvmInline` on Native).
+  `kspAndroid(libs.kompactKsp)`; `afterEvaluate` adds `kspIos` + `kspKotlinIosProcessorClasspath`
+  (the latter binds the processor to the ios KSP task classpath — resolves the v1.3 ios anomaly);
+  per-task `kompact.generate=jvm|ios` mode routing via `KspAATask.commandLineArgumentProviders`
+  (`kspAndroidMain`→jvm, `kspKotlinIos`→ios); `commonMain` `implementation(libs.kompact)`;
+  `-Xexpect-actual-classes` on common/android/ios; no `mavenLocal()` mirror.
+- `AdPduHeader.kt` (commonMain): `@KommutModel expect value class AdPduHeader(raw: ByteArray)` —
+  `@KompactField`-annotated `version`/`pduType`/`reserved` + `encodeAdPduHeader` + `PduType` enum
+  + `AD_PDU_VERSION`/`AD_PDU_HEADER_BITS` constants. `@KommutModel` ON → KSP generates the platform
+  actuals (`AdPduHeaderGenJvm.kt`/`AdPduHeaderGenIos.kt`).
+- `AdPduHeader.kt` (androidMain / iosMain): **deleted** — replaced by the KSP-generated actuals.
 - `AdPduCrypto.kt`: `UnsealedAdPdu(header, payload)`; `seal(dir, seqno, key, header, payload,
   aad = EMPTY_AAD): ByteArray` over `header.raw ‖ payload`; `unseal(...): UnsealedAdPdu?`.
 - `AdPduTest.kt`: TDD — bit-exact encode goldens + independent OpenSSL `cryptography.AESGCM`
   seal/unseal oracles + tamper/seqno/direction/key/aad rejection + monotonic-distinctness (18 tests).
+  94 total tests, 0 failures.
 
 ---
 
@@ -419,3 +432,43 @@ bridge (defect-#4 patch on `kompact` 0.1.5); on a clean env it resolves `kompact
 `0.1.6` release. On release: no pdcble toml bump (published 0.1.6 fixes defect #4)
 — drop the bridge. Until then: (a) wait for 0.1.6, or (b) apply the 1-line
 `buildActual` patch locally + a local `mavenLocal()` mirror.
+
+### ADR-0003 v1.5 amendment (2026-09-17) — kompact 0.1.5 → 0.1.6, defect #4 fixed upstream (version-bump-only; no build-logic change vs 5cbaf7c)
+
+Per owner directive "kompact 0.1.6 is now available and fixes defect #4 for both JVM and iOS
+targets," the catalog was bumped `kompact = 0.1.6` / `kompactKsp = 0.1.6` (`e3e55e5` Bump kompact
+0.1.5 -> 0.1.6). 0.1.6 carries PR #51's 1-line `buildActual` fix: `.addModifiers(KModifier.ACTUAL)`
+appended to the `companionObjectBuilder()` chain, so the generated companions emit
+`public actual companion object` rather than the bare `public companion object` that 0.1.5
+rejected with "Declaration must be marked with 'actual'".
+
+**Status change:** the local `mavenLocal()` bridge from v1.4 is **no longer needed** — the
+committed tree resolves `kompact` 0.1.6 (defect-#4 fix included) directly from Maven Central.
+`settings.gradle.kts` carries only `google()` + `mavenCentral()` (no `mavenLocal()` mirror).
+
+**Green gate (clean tree, JDK 21, no bridge):**
+`/opt/homebrew/bin/gradle :testAndroidHostTest :compileKotlinIos --rerun-tasks --console=plain
+--no-build-cache` → **BUILD SUCCESSFUL in 21s**, `TOTAL tests=94 skipped=0 failures=0 errors=0`.
+Generated artifacts:
+- `build/generated/ksp/android/androidMain/kotlin/ch/trancee/kemseed/pdu/AdPduHeaderGenJvm.kt` —
+  `public actual companion object` + `require(raw.size >= 1)` guard (defect #3 satisfied).
+- `build/generated/ksp/ios/iosMain/kotlin/ch/trancee/kemseed/pdu/AdPduHeaderGenIos.kt` —
+  `public actual companion object` (defect #4 satisfied for iOS target too).
+Both actuals are now emitted (the v1.4 ios-binding anomaly is resolved by the Stage-2
+`kspKotlinIosProcessorClasspath` binding + per-task `kompact.generate=ios` mode routing), so
+`./gradlew :compileKotlinIos` succeeds without the hand-written ios `actual`.
+
+**Codegen is ON** — `@KommutModel` is enabled on the `commonMain` `expect value class
+AdPduHeader`; the hand-written `androidMain`/`iosMain` `AdPduHeader.kt` actuals are deleted;
+only the KSP-generated `...GenJvm`/`...GenIos` actuals remain. The per-source-set
+`kompact.generate=jvm|ios` mode routing (via `KspAATask.commandLineArgumentProviders`)
+emits exactly one platform actual per KSP task, preventing expect/actual duplicates.
+
+**Downstream impact:** zero — `AdPduHeader`'s public API (`.raw`, `.version`, `.pduType`,
+`.reserved`, `encodeAdPduHeader`, `PduType`) is identical to the codegen output, so
+`AdPduCrypto.kt` and `AdPduTest.kt` (94 tests, incl. `raw==[0x21]` golden) are unchanged.
+
+**v1.4 supersession:** the v1.4 "Migration / status" paragraph (which described the 0.1.5
+state as GREEN-only-with-bridge) is superseded by this amendment — 0.1.6 resolves defect #4
+upstream and the bridge is dropped; the committed tree is GREEN on a clean environment
+resolving from Maven Central.
