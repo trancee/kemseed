@@ -111,7 +111,7 @@ kotlin {
             }
             // AdPduHeader is a model-annotation expect value-class shape (ADR-0003 §Adoption), so
             // -Xexpect-actual-classes is required to consume the published expect/actual value
-            // classes (e.g. ScalarType) and pqcble's own expect. The generator (0.1.6, defects
+            // classes (e.g. ScalarType) and kemseed's own expect. The generator (0.1.6, defects
             // #3+#4
             // fixed) emits the platform actuals (jvm/ios via the per-task kompact.generate mode arg
             // below); @KommutModel is ON on the expect.

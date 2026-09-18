@@ -11,7 +11,7 @@
   `actual`s are **deleted**; only the KSP-generated actuals remain. Green gate: `BUILD SUCCESSFUL
   in 21s`, `TOTAL tests=94 skipped=0 failures=0 errors=0` (commit `e3e55e5`).*
 - **Date:** 2026-09-13 (adopted v1.0) · 2026-09-14 (kompact-ksp deferred, v1.1) · 2026-09-13 (kompact-ksp 0.1.2 wired, codegen defects A+B found, v1.2) · 2026-09-15 (kompact bumped to 0.1.4, codegen re-attempted live, generator defect #3 found, v1.3) · 2026-09-16 (kompact bumped to 0.1.5, defect #3 fixed upstream PR #48, defect #4 patched via mavenLocal bridge, v1.4) · 2026-09-17 (kompact bumped to 0.1.6, defect #4 fixed upstream PR #51, bridge dropped, codegen GREEN, v1.5)
-- **Deciders:** project (trancee = kompact author; pqcble = consumer on Kotlin 2.4.20 / AGP 9.4.0 / Gradle 9.7.1)
+- **Deciders:** project (trancee = kompact author; kemseed = consumer on Kotlin 2.4.20 / AGP 9.4.0 / Gradle 9.7.1)
 - **Context ref:** `PROMPT.md` §1.b (Phase-1b AD-PDU envelope) + `.scratch/pqc-ble-mesh/issues/08-prototype-spec-outline.md` §1.6/§3 (Phase D)
 
 ## Context
@@ -50,7 +50,7 @@ The processor (`kompact-ksp`) is compile-time-only (kotlinpoet-jvm 2.4.0).
   → `ch.trancee.kompact.ksp.KompactSymbolProcessorProvider` (ground-truthed from the unpacked 0.1.2
   service file + `javap` confirming the class implements the `com.google.devtools.ksp.processing.*` interface).
 
-**Verified live on pqcble (KSP 2.3.12, Kotlin 2.4.20):** `:kspAndroidMain` now loads the
+**Verified live on kemseed (KSP 2.3.12, Kotlin 2.4.20):** `:kspAndroidMain` now loads the
 processor — `/tmp/ksp_info.txt` shows:
 
 ```
@@ -65,7 +65,7 @@ and the validator (`LayoutValidator.validateWidths` / `validateNoOverlaps`) pass
 
 **However, codegen then fails — `:kspAndroidMain` → `KSP failed with exit code: PROCESSING_ERROR`.**
 Two defects in `kompact-ksp` 0.1.2's `ValueClassGenerator` / `KompactSymbolProcessor` block the
-`@KompactModel` codegen path for pqcble's KMP `expect value class`:
+`@KompactModel` codegen path for kemseed's KMP `expect value class`:
 
 ### Defect A — round-handling: `FileAlreadyExistsException` on re-process
 
@@ -87,7 +87,7 @@ it throws `FileAlreadyExistsException` whose message is the target path. `Kompac
 
 ```
 e: [ksp] …/AdPduHeader.kt:90: KompactKSP: failed to process ksp.com.google.devtools.ksp.common.impl.KSNameImpl@466fee3:
-   /Users/phil/Projects/pqcble/build/generated/ksp/android/androidMain/kotlin/ch/trancee/kemseed/pdu/AdPduHeaderGen.kt
+   /Users/phil/Projects/kemseed/build/generated/ksp/android/androidMain/kotlin/ch/trancee/kemseed/pdu/AdPduHeaderGen.kt
 ```
 
 ### Defect B — generated `expect` is routed to the platform (not `commonMain`)
@@ -132,7 +132,7 @@ generator defect #3 below is fixed upstream — so `AdPduHeader` is shipped **ha
 which is **byte-for-byte the accessor shape `ValueClassGenerator` intends** (`get() =
 KompactRuntime.readBits(raw, off, w)`).
 
-- **Runtime surface pulled by pqcble:** `kompact` 0.1.4 only — kotlin-stdlib transitive (no other
+- **Runtime surface pulled by kemseed:** `kompact` 0.1.4 only — kotlin-stdlib transitive (no other
   runtime deps). The 0.1.4 runtime API is byte-identical to 0.1.2 (`readBits/writeBits`,
   `KompactWriter`, `ScalarType.of`).
 - **Kotlin / AGP / Gradle / JDK:** Kotlin 2.4.20, AGP 9.4.0 (android-library KMP), Gradle 9.7.1,
@@ -151,7 +151,7 @@ KompactRuntime.readBits(raw, off, w)`).
 
 ### Re-enabling `@KompactModel` codegen (upstream fix required)
 
-Re-enabling pqcble is gated on **Defects A and B** (both **fixed** in kompact-ksp 0.1.4 — the
+Re-enabling kemseed is gated on **Defects A and B** (both **fixed** in kompact-ksp 0.1.4 — the
 processor now loads/parses/generates without `FileAlreadyExistsException` and routes the
 expect/actuals to the correct platform trees) **AND on a residual generator defect #3** below,
 plus the ios-binding anomaly:
@@ -182,7 +182,7 @@ plus the ios-binding anomaly:
   resolved too or `AdPduHeaderGenIos.kt` is never generated. (TODO: isolate in a follow-up — the
   global `ksp{arg}` mode-routing also failed earlier; per-task modes require the binding to load
   first.)
-- Plus: drop the `@KompactField`/`@KompactPreview`/`@KompactModel` from pqcble's hand-written
+- Plus: drop the `@KompactField`/`@KompactPreview`/`@KompactModel` from kemseed's hand-written
   expect (or delete the hand-written expect/actuals) so kompact's generated `expect` (class
   `AdPduHeader`) isn't a duplicate.
 
@@ -375,16 +375,16 @@ matching the hand-written `VehicleTelemetry` reference). The processor had
 simply not invoked `.initializer("raw")` in `buildActual`; that invocation is
 now added.
 
-Residual kotlinpoet gap — **expect form only, not required by pqcble**:
+Residual kotlinpoet gap — **expect form only, not required by kemseed**:
 kotlinpoet forbids `PropertySpec` initializers in `expect` classes ("properties
 in expect classes can't have initializers") and exposes no val modifier for
 `ParameterSpec`, so a `val` cannot be placed on an `expect value-class`
 constructor parameter via the high-level API. The processor drops the invalid
 `actual` from the expect's `raw` (expect members must not be `actual`) and
 emits it as an abstract body property; consumers hand-write their `expect`
-declaration (pqcble does — it runs the processor in `jvm`/`ios` modes only,
+declaration (kemseed does — it runs the processor in `jvm`/`ios` modes only,
 never `common`). Documented as a known kotlinpoet limitation; does not affect
-pqcble.
+kemseed.
 
 **Upstream defect log.**
 - defect #3 (raw constructor `val`) — fixed in `kompact` 0.1.5 via PR #48; all CI
@@ -405,7 +405,7 @@ append `.addModifiers(KModifier.ACTUAL)` to the `companionObjectBuilder()` chain
 asserting `contains("actual companion object")`. `kompact-ksp:test` -> `BUILD SUCCESSFUL`
 (27 + 2 new).
 
-**pqcble Stage 2 — GREEN (proof via local `mavenLocal()` bridge).** With `kompact` 0.1.5
+**kemseed Stage 2 — GREEN (proof via local `mavenLocal()` bridge).** With `kompact` 0.1.5
 + defect-#3 fix and the defect-#4 patch bridged through local `mavenLocal()` (a
 `settings.gradle.kts` mirror, reverted/uncommitted — not part of this tree), Stage 2
 lands:
@@ -419,7 +419,7 @@ lands:
   --rerun-tasks --console=plain --no-build-cache` -> `BUILD SUCCESSFUL`,
   `tests=94 skipped=0 failures=0 errors=0`.
 
-**pqcble commit status.** `build.gradle.kts` (kommut wiring),
+**kemseed commit status.** `build.gradle.kts` (kommut wiring),
 `gradle/libs.versions.toml` (`kompact=0.1.5`), `commonMain` expect,
 `commonTest` goldens (94, incl. `raw==[0x21]`, untouched), ADR-0003 v1.5. The
 `androidMain` / `iosMain` `AdPduHeader.kt` hand-written actuals are deleted; only
