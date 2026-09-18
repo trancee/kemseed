@@ -1,0 +1,32 @@
+name: CI
+
+# Q1 repo gate (Constitution Q1 + AGENTS spotless skill): spotlessCheck (ktfmt
+# kotlinlangStyle, ratchetFrom main) + JVM host tests + Kotlin/Native iOS compile.
+#
+# detekt is intentionally OMITTED from this gate: the io.detekt 1.23.8 Gradle-plugin
+# marker is unresolvable on the Gradle Plugin Portal + Maven Central (303 -> dead
+# `io/detekt` Maven-Central group; no `detekt-gradle-plugin` under `io.github.detekt`,
+# and `detekt-cli` 1.23.8 404s too). This is an upstream publishing break, not a
+# Gradle-9 or repo-config issue (Gradle itself fails at resolution, not configuration).
+# Re-enable `:detekt` (+ a `detekt {}` block + the version/alias in
+# gradle/libs.versions.toml) once the marker is republished; see docs/adr/0003.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    name: Q1 gate (spotless + tests + iOS compile)
+    runs-on: macos-14    # compileKotlinIos (KMP iOS) requires macOS + Xcode.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25      # mirrors org.gradle.jvm.toolchain=25 (gradle.properties)
+      - name: :spotlessCheck     # read-only format gate; fail fast before tests compile
+        run: ./gradlew :spotlessCheck --no-daemon --console=plain
+      - name: :testAndroidHostTest + :compileKotlinIos
+        run: ./gradlew :testAndroidHostTest :compileKotlinIos --no-daemon --console=plain
