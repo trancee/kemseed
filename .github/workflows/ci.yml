@@ -18,6 +18,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   gate:
     name: Q1 gate (spotless + tests + iOS compile)
