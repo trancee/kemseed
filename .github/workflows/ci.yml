@@ -29,6 +29,17 @@ jobs:
         with:
           distribution: temurin
           java-version: 25      # mirrors org.gradle.jvm.toolchain=25 (gradle.properties)
+      # Ensure the `main` ref exists. actions/checkout defaults to fetch-depth: 1, so
+      # any run NOT on `main` (Dependabot/feature/PR branches) has no `main` ref and
+      # Spotless's ratchetFrom("main") (build.gradle.kts:35) throws
+      # "No such reference 'main'" at :spotlessKotlin task creation -> :spotlessCheck
+      # fails (reproduced from GH run 35385527317). fetch-depth:1 of `main` is enough
+      # since ratchetFrom only diffs against the base commit tree.
+      # Only materialise `main` when ABSENT: on a push to `main` it is already the
+      # checked-out branch, and `git fetch into a checked-out branch` is refused
+      # ("fatal: refusing to fetch into branch 'refs/heads/main' ...", exit 128).
+      - name: Ensure base 'main' ref exists for spotless ratchet
+        run: git rev-parse --verify --quiet main >/dev/null || git fetch --no-tags --depth 1 origin main:main
       - name: :spotlessCheck     # read-only format gate; fail fast before tests compile
         run: ./gradlew :spotlessCheck --no-daemon --console=plain
       - name: :testAndroidHostTest + :compileKotlinIos
