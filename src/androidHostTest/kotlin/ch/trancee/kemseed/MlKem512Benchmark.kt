@@ -79,8 +79,6 @@ internal class MlKem512Benchmark {
     private val probe = AllocProbe()
 
     private fun measure(block: () -> Unit): Sample {
-        // Light GC nudge so allocation deltas are less polluted by concurrent GC
-        // (not perfect; good enough for order-of-magnitude / regression signal).
         val before = probe.allocatedBytes()
         val ns = measureNanoTime(block)
         val after = probe.allocatedBytes()
@@ -129,7 +127,6 @@ internal class MlKem512Benchmark {
         val warmup = 20
         val iterations = 50
 
-        // Warmup (JIT + class init)
         repeat(warmup) {
             val (pk, sk) = MlKem512.keygen(d, z)
             val (ss, ct) = MlKem512.encapsulate(pk, m)
@@ -174,11 +171,10 @@ internal class MlKem512Benchmark {
 
         println()
         println("=== kemseed pure-Kotlin ML-KEM-512 host benchmark ===")
-        println(
-            "JVM ${System.getProperty(\"java.version\")} ${System.getProperty(\"os.arch\")} | " +
-                "warmup=$warmup measure=$iterations | " +
-                "allocProbe=${if (probe.available) \"ThreadMXBean\" else \"unavailable\"}",
-        )
+        val jvmVer = System.getProperty("java.version")
+        val osArch = System.getProperty("os.arch")
+        val probeName = if (probe.available) "ThreadMXBean" else "unavailable"
+        println("JVM $jvmVer $osArch | warmup=$warmup measure=$iterations | allocProbe=$probeName")
         println(
             "Sizes: pk=${MlKem512.PUBLIC_KEY_LEN} sk=${MlKem512.SECRET_KEY_LEN} " +
                 "ct=${MlKem512.CIPHERTEXT_LEN} ss=${MlKem512.SHARED_SECRET_LEN}",
@@ -188,8 +184,6 @@ internal class MlKem512Benchmark {
         report(Stats("Decaps", decapsSamples))
         report(Stats("NTT", nttSamples))
 
-        // Sanity: medians should stay in a sane band for a host JVM (not a hard gate —
-        // environments vary; this catches catastrophic regressions only).
         val keygenMedianMs = keygenSamples.map { it.ns }.sorted()[iterations / 2] / 1e6
         val encapsMedianMs = encapsSamples.map { it.ns }.sorted()[iterations / 2] / 1e6
         val decapsMedianMs = decapsSamples.map { it.ns }.sorted()[iterations / 2] / 1e6
@@ -198,7 +192,6 @@ internal class MlKem512Benchmark {
         assertTrue(decapsMedianMs < 50.0, "Decaps median ${decapsMedianMs}ms looks pathological")
 
         if (probe.available) {
-            // Each op allocates multiple polys + SHAKE buffers; expect well above 1 KiB.
             val minMedianAlloc =
                 max(
                     keygenSamples.map { it.allocBytes }.sorted()[iterations / 2],
@@ -211,9 +204,8 @@ internal class MlKem512Benchmark {
                 minMedianAlloc > 1024,
                 "Expected multi-KiB allocations per ML-KEM op; median alloc=$minMedianAlloc",
             )
-            println(
-                "Allocation signal OK (median KeyGen=${fmtBytes(keygenSamples.map { it.allocBytes }.sorted()[iterations / 2])})",
-            )
+            val kgMed = keygenSamples.map { it.allocBytes }.sorted()[iterations / 2]
+            println("Allocation signal OK (median KeyGen=${fmtBytes(kgMed)})")
         }
         println("=== end ML-KEM benchmark ===")
         println()
