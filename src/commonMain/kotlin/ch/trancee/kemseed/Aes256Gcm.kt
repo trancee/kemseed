@@ -32,10 +32,11 @@ internal object Aes256Gcm {
         require(key.size == Aes256.KEY_SIZE) { "GCM key must be ${Aes256.KEY_SIZE} bytes; got ${key.size}" }
         require(iv.size == IV_SIZE) { "GCM IV must be $IV_SIZE bytes; got ${iv.size}" }
 
+        val sched = Aes256.expandKey(key)                  // expand ONCE; reused for CTR keystream + tag (ADR-0002 §5.2)
         val j0 = Gmac.j0(iv)
-        val ct = ctrTransform(key, j0, plain)              // AES-256-CTR keystream: ct = plain ⊕ AES(Inc32(J0))^…
-        val tag = Gmac.gcmAuthTag(key, iv, aad, ct)
-        return ct + tag                                     // ciphertext ‖ tag
+        val ct = ctrTransform(sched, j0, plain)            // AES-256-CTR keystream: ct = plain ⊕ AES(Inc32(J0))^…
+        val tag = Gmac.gcmAuthTag(sched, iv, aad, ct)
+        return ct + tag                                    // ciphertext ‖ tag
     }
 
     /** Open: verify-then-decrypt `ciphertext ‖ tag`. Returns plaintext, or `null` on tag failure (CT). */
@@ -48,19 +49,20 @@ internal object Aes256Gcm {
         val ct = ctAndTag.copyOfRange(0, tagOff)
         val tag = ctAndTag.copyOfRange(tagOff, ctAndTag.size)
 
-        val expect = Gmac.gcmAuthTag(key, iv, aad, ct)
-        if (!ctEquals(expect, tag)) return null             // reject BEFORE any plaintext exposure
-        return ctrTransform(key, Gmac.j0(iv), ct)           // CTR decrypt == encrypt (keystream XOR)
+        val sched = Aes256.expandKey(key)                  // expand ONCE; tag verify + CTR decrypt share it
+        val expect = Gmac.gcmAuthTag(sched, iv, aad, ct)
+        if (!ctEquals(expect, tag)) return null            // reject BEFORE any plaintext exposure
+        return ctrTransform(sched, Gmac.j0(iv), ct)        // CTR decrypt == encrypt (keystream XOR)
     }
 
     /** AES-256-CTR keystream over [src] seeded from J0 (first block = AES(Inc32(J0))).
      *  CTR is a symmetric XOR, so one primitive both encrypts (seal) and decrypts (open). */
-    private fun ctrTransform(key: ByteArray, j0: ByteArray, src: ByteArray): ByteArray {
+    private fun ctrTransform(sched: Aes256Key, j0: ByteArray, src: ByteArray): ByteArray {
         val out = ByteArray(src.size)
         var ctr = Gmac.inc32(j0)
         var off = 0
         while (off < src.size) {
-            val ks = Aes256.encryptBlock(key, ctr)
+            val ks = sched.encryptBlock(ctr)
             val take = minOf(BLOCK_SIZE, src.size - off)
             for (j in 0 until take) out[off + j] = (src[off + j].toInt() xor ks[j].toInt()).toByte()
             ctr = Gmac.inc32(ctr)

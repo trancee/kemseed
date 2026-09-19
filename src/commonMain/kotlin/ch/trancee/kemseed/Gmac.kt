@@ -130,18 +130,21 @@ internal object Gmac {
         return r
     }
 
-    /** AES-256-GCM/GMAC authentication tag for `aad ‖ ct` under [key] with 96-bit [iv]:
-     *  `T = GHASH_H(pad(aad) ‖ pad(ct) ‖ lenBlock(aad,ct)) XOR AES-256(J0)`. */
-    internal fun gcmAuthTag(key: ByteArray, iv: ByteArray, aad: ByteArray, ct: ByteArray): ByteArray {
-        require(key.size == Aes256.KEY_SIZE) { "GCM key must be ${Aes256.KEY_SIZE} bytes; got ${key.size}" }
-        val h = Aes256.encryptBlock(key, ByteArray(BLOCK_SIZE))
+    /** AES-256-GCM/GMAC authentication tag for `aad ‖ ct` under precomputed [key] with 96-bit [iv]:
+     *  `T = GHASH_H(pad(aad) ‖ pad(ct) ‖ lenBlock(aad,ct)) XOR AES-256(J0)`. Both the hash
+     *  subkey H = AES(J0=0) and the S = AES(J0) block reuse the single expanded schedule
+     *  ([Aes256Key]) rather than re-expanding the AES key on each block (ADR-0002 §5.2). */
+    internal fun gcmAuthTag(key: Aes256Key, iv: ByteArray, aad: ByteArray, ct: ByteArray): ByteArray {
+        val h = key.encryptBlock(ByteArray(BLOCK_SIZE))
         val j0 = j0(iv)
         val y = ghashFold(h, padToBlockLen(aad) + padToBlockLen(ct) + lenBlock(aad, ct))
-        val s = Aes256.encryptBlock(key, j0)
+        val s = key.encryptBlock(j0)
         return xor16(y, s)
     }
 
-    /** AES-256-GMAC tag = GCM tag with an empty plaintext (`gcmAuthTag(key, iv, aad, ∅)`). */
+    /** AES-256-GMAC tag = GCM tag with an empty plaintext, under a raw 32-byte [key].
+     *  Used by the Hmb1 handshake DoS-gate signer verification (#15); expands the key once
+     *  per call (signer verify is infrequent vs. the per-PDU GCM path). */
     internal fun gmacTag(key: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray =
-        gcmAuthTag(key, iv, aad, EMPTY)
+        gcmAuthTag(Aes256.expandKey(key), iv, aad, EMPTY)
 }

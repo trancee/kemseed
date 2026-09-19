@@ -71,43 +71,61 @@ internal object Aes256 {
         0x1b000000, 0x36000000,
     )
 
-    /** Encrypt a single 16-byte block with a 32-byte key. Returns 16 bytes. */
-    internal fun encryptBlock(key: ByteArray, block: ByteArray): ByteArray {
-        val w = keyExpansion(key)
+    /** Precompute the AES-256 key schedule (60 words / 15 round keys) for a 32-byte [key].
+     *
+     * Reusable across many blocks: GCM expands once per (key, iv) and applies it to every
+     * CTR keystream block + both the H and S AES blocks, so hoisting the schedule out of
+     * the per-block path is the single biggest AES win here (ADR-0002 §5.2 perf note).
+     * Correctness-gated by the FIPS-197 KATs in [Aes256Test] — this is the *same*
+     * `keyExpansion` math, just computed once and reused. */
+    internal fun expandKey(key: ByteArray): Aes256Key {
+        require(key.size == KEY_SIZE) { "AES-256 key must be $KEY_SIZE bytes; got ${key.size}" }
+        return Aes256Key(keyExpansion(key))
+    }
+
+    /** Encrypt a 16-byte block with a precomputed [Aes256Key.schedule]. Returns 16 bytes. */
+    internal fun encryptBlock(block: ByteArray, schedule: IntArray): ByteArray {
         val s = block.copyOf()
-        addRoundKey(s, w, 0)
+        addRoundKey(s, schedule, 0)
         for (r in 1..(NR - 1)) {
             subBytes(s)
             shiftRows(s)
             mixColumns(s)
-            addRoundKey(s, w, r * 4)
+            addRoundKey(s, schedule, r * 4)
         }
         subBytes(s)
         shiftRows(s)
-        addRoundKey(s, w, NR * 4)
+        addRoundKey(s, schedule, NR * 4)
         return s
     }
 
-    /** Decrypt a single 16-byte block with a 32-byte key. Returns 16 bytes. */
-    internal fun decryptBlock(key: ByteArray, block: ByteArray): ByteArray {
-        val w = keyExpansion(key)
+    /** Encrypt a single 16-byte block with a raw 32-byte key. Returns 16 bytes.
+     *  Convenience for one-shot/KAT use — re-expands the key each call. Hot GCM/CTR paths
+     *  must call [expandKey] once and reuse the [Aes256Key] instead. */
+    internal fun encryptBlock(key: ByteArray, block: ByteArray): ByteArray = expandKey(key).encryptBlock(block)
+
+    /** Decrypt a 16-byte block with a precomputed [Aes256Key.schedule]. Returns 16 bytes. */
+    internal fun decryptBlock(block: ByteArray, schedule: IntArray): ByteArray {
         val s = block.copyOf()
         // Inverse of final round (SubBytes, ShiftRows, AddRoundKey): self-inverse AddRoundKey, then InvShiftRows, InvSubBytes.
-        addRoundKey(s, w, NR * 4)
+        addRoundKey(s, schedule, NR * 4)
         invShiftRows(s)
         invSubBytes(s)
         // Inverse of inner round (SubBytes, ShiftRows, MixColumns, AddRoundKey(r)):
         // reverse order with each op inverted.
         for (r in (NR - 1) downTo 1) {
-            addRoundKey(s, w, r * 4)
+            addRoundKey(s, schedule, r * 4)
             invMixColumns(s)
             invShiftRows(s)
             invSubBytes(s)
         }
         // Inverse of initial AddRoundKey(0).
-        addRoundKey(s, w, 0)
+        addRoundKey(s, schedule, 0)
         return s
     }
+
+    /** Decrypt with a raw 32-byte key (re-expands — one-shot/KAT use only). */
+    internal fun decryptBlock(key: ByteArray, block: ByteArray): ByteArray = expandKey(key).decryptBlock(block)
 
     // ---- GF(2^8) over x^8 + x^4 + x^3 + x + 1; branchless (public multiplier) ----
     private fun gmul(a: Int, b: Int): Int {
@@ -213,4 +231,21 @@ internal object Aes256 {
         val b3 = AES_SBOX[word and 0xFF]
         return (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
     }
+}
+
+/**
+ * Pre-expanded AES-256 key schedule (60 words / 15 round keys), reusable across many
+ * blocks. Created once via [Aes256.expandKey]; every GCM seal/open reuses a single
+ * schedule for the CTR keystream blocks + the GHASH H and S blocks, eliminating the
+ * per-block key-expansion that the naive `Aes256.encryptBlock(key, …)` path performs
+ * (ADR-0002 §5.2 perf note). A lightweight carrier over the underlying [IntArray]
+ * schedule; no boxing beyond the array itself on JVM/iOS.
+ */
+internal class Aes256Key internal constructor(private val schedule: IntArray) {
+
+    /** Encrypt a 16-byte block using the precomputed schedule (no re-expansion). */
+    fun encryptBlock(block: ByteArray): ByteArray = Aes256.encryptBlock(block, schedule)
+
+    /** Decrypt a 16-byte block using the precomputed schedule (no re-expansion). */
+    fun decryptBlock(block: ByteArray): ByteArray = Aes256.decryptBlock(block, schedule)
 }
