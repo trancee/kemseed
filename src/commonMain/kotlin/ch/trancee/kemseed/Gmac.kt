@@ -130,21 +130,24 @@ internal object Gmac {
         return r
     }
 
-    /** AES-256-GCM/GMAC authentication tag for `aad ‖ ct` under precomputed [key] with 96-bit [iv]:
-     *  `T = GHASH_H(pad(aad) ‖ pad(ct) ‖ lenBlock(aad,ct)) XOR AES-256(J0)`. Both the hash
-     *  subkey H = AES(J0=0) and the S = AES(J0) block reuse the single expanded schedule
-     *  ([Aes256Key]) rather than re-expanding the AES key on each block (ADR-0002 §5.2). */
-    internal fun gcmAuthTag(key: Aes256Key, iv: ByteArray, aad: ByteArray, ct: ByteArray): ByteArray {
-        val h = key.encryptBlock(ByteArray(BLOCK_SIZE))
+    /** AES-256-GCM/GMAC authentication tag for `aad ‖ ct` under [native] (one key/schedule)
+     *  with 96-bit [iv]: `T = GHASH_H(pad(aad) ‖ pad(ct) ‖ lenBlock(aad,ct)) XOR AES-256(J0)`.
+     *  Both the hash subkey H = AES(0^16) and S = AES(J0) are produced through the same
+     *  [Aes256Native] instance (materialised once per seal/open) rather than re-expanding the
+     *  AES key per block (ADR-0002 §5.2). H and S reuse one 16-byte scratch buffer — H is
+     *  consumed by [ghashFold] before S overwrites it. */
+    internal fun gcmAuthTag(native: Aes256Native, iv: ByteArray, aad: ByteArray, ct: ByteArray): ByteArray {
+        val buf = ByteArray(BLOCK_SIZE)
+        native.encryptBlock(ByteArray(BLOCK_SIZE), buf)            // H = AES(0^16)
         val j0 = j0(iv)
-        val y = ghashFold(h, padToBlockLen(aad) + padToBlockLen(ct) + lenBlock(aad, ct))
-        val s = key.encryptBlock(j0)
-        return xor16(y, s)
+        val y = ghashFold(buf, padToBlockLen(aad) + padToBlockLen(ct) + lenBlock(aad, ct))
+        native.encryptBlock(j0, buf)                                // S = AES(J0) — reuse buf (H already consumed)
+        return xor16(y, buf)
     }
 
     /** AES-256-GMAC tag = GCM tag with an empty plaintext, under a raw 32-byte [key].
-     *  Used by the Hmb1 handshake DoS-gate signer verification (#15); expands the key once
-     *  per call (signer verify is infrequent vs. the per-PDU GCM path). */
+     *  Used by the Hmb1 handshake DoS-gate signer verification (#15); materialises [Aes256Native]
+     *  once per call (signer verify is infrequent vs. the per-PDU GCM path). */
     internal fun gmacTag(key: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray =
-        gcmAuthTag(Aes256.expandKey(key), iv, aad, EMPTY)
+        gcmAuthTag(Aes256Native(key), iv, aad, EMPTY)
 }

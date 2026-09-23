@@ -32,10 +32,10 @@ internal object Aes256Gcm {
         require(key.size == Aes256.KEY_SIZE) { "GCM key must be ${Aes256.KEY_SIZE} bytes; got ${key.size}" }
         require(iv.size == IV_SIZE) { "GCM IV must be $IV_SIZE bytes; got ${iv.size}" }
 
-        val sched = Aes256.expandKey(key)                  // expand ONCE; reused for CTR keystream + tag (ADR-0002 §5.2)
+        val aes = Aes256Native(key)                       // materialise NATIVE once; reused for CTR keystream + tag (D11=B, ADR-0002 §5.2)
         val j0 = Gmac.j0(iv)
-        val ct = ctrTransform(sched, j0, plain)            // AES-256-CTR keystream: ct = plain ⊕ AES(Inc32(J0))^…
-        val tag = Gmac.gcmAuthTag(sched, iv, aad, ct)
+        val ct = ctrTransform(aes, j0, plain)              // AES-256-CTR keystream: ct = plain ⊕ AES(Inc32(J0))^…
+        val tag = Gmac.gcmAuthTag(aes, iv, aad, ct)
         val out = ByteArray(ct.size + TAG_SIZE)            // pre-sized ct ‖ tag (one alloc; no `+` transient)
         ct.copyInto(out, 0)
         tag.copyInto(out, ct.size)
@@ -52,21 +52,23 @@ internal object Aes256Gcm {
         val ct = ctAndTag.copyOfRange(0, tagOff)
         val tag = ctAndTag.copyOfRange(tagOff, ctAndTag.size)
 
-        val sched = Aes256.expandKey(key)                  // expand ONCE; tag verify + CTR decrypt share it
-        val expect = Gmac.gcmAuthTag(sched, iv, aad, ct)
+        val aes = Aes256Native(key)                       // materialise NATIVE once; tag verify + CTR decrypt share it
+        val expect = Gmac.gcmAuthTag(aes, iv, aad, ct)
         if (!ctEquals(expect, tag)) return null            // reject BEFORE any plaintext exposure
-        return ctrTransform(sched, Gmac.j0(iv), ct)        // CTR decrypt == encrypt (keystream XOR)
+        return ctrTransform(aes, Gmac.j0(iv), ct)          // CTR decrypt == encrypt (keystream XOR)
     }
 
     /** AES-256-CTR keystream over [src] seeded from J0 (first block = AES(Inc32(J0))).
-     *  CTR is a symmetric XOR, so one primitive both encrypts (seal) and decrypts (open). */
-    private fun ctrTransform(sched: Aes256Key, j0: ByteArray, src: ByteArray): ByteArray {
+     *  CTR is a symmetric XOR, so one primitive both encrypts (seal) and decrypts (open).
+     *  [aes] (D11=B) dispatches to native HW AES when a backend is present, else the pure
+     *  reference actual — byte-exact, KAT-gated. */
+    private fun ctrTransform(aes: Aes256Native, j0: ByteArray, src: ByteArray): ByteArray {
         val out = ByteArray(src.size)
         val ks = ByteArray(BLOCK_SIZE)                     // keystream buffer reused across ALL CTR blocks (no per-block alloc)
         var ctr = Gmac.inc32(j0)
         var off = 0
         while (off < src.size) {
-            sched.encryptBlock(ctr, ks)                    // in-place keystream; ks reused (ADR-0002 §5.2 alloc cut #1)
+            aes.encryptBlock(ctr, ks)                      // native/HW block; ks reused in-place (D11=B, ADR-0002 §5.2)
             val take = minOf(BLOCK_SIZE, src.size - off)
             for (j in 0 until take) out[off + j] = (src[off + j].toInt() xor ks[j].toInt()).toByte()
             ctr = Gmac.inc32(ctr)
