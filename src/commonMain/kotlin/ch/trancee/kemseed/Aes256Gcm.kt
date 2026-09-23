@@ -36,7 +36,10 @@ internal object Aes256Gcm {
         val j0 = Gmac.j0(iv)
         val ct = ctrTransform(sched, j0, plain)            // AES-256-CTR keystream: ct = plain ⊕ AES(Inc32(J0))^…
         val tag = Gmac.gcmAuthTag(sched, iv, aad, ct)
-        return ct + tag                                    // ciphertext ‖ tag
+        val out = ByteArray(ct.size + TAG_SIZE)            // pre-sized ct ‖ tag (one alloc; no `+` transient)
+        ct.copyInto(out, 0)
+        tag.copyInto(out, ct.size)
+        return out
     }
 
     /** Open: verify-then-decrypt `ciphertext ‖ tag`. Returns plaintext, or `null` on tag failure (CT). */
@@ -59,10 +62,11 @@ internal object Aes256Gcm {
      *  CTR is a symmetric XOR, so one primitive both encrypts (seal) and decrypts (open). */
     private fun ctrTransform(sched: Aes256Key, j0: ByteArray, src: ByteArray): ByteArray {
         val out = ByteArray(src.size)
+        val ks = ByteArray(BLOCK_SIZE)                     // keystream buffer reused across ALL CTR blocks (no per-block alloc)
         var ctr = Gmac.inc32(j0)
         var off = 0
         while (off < src.size) {
-            val ks = sched.encryptBlock(ctr)
+            sched.encryptBlock(ctr, ks)                    // in-place keystream; ks reused (ADR-0002 §5.2 alloc cut #1)
             val take = minOf(BLOCK_SIZE, src.size - off)
             for (j in 0 until take) out[off + j] = (src[off + j].toInt() xor ks[j].toInt()).toByte()
             ctr = Gmac.inc32(ctr)

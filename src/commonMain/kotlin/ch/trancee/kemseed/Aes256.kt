@@ -83,20 +83,32 @@ internal object Aes256 {
         return Aes256Key(keyExpansion(key))
     }
 
+    /** Run the 14 AES encryption rounds, mutating [target] in place. */
+    private fun encryptRounds(target: ByteArray, schedule: IntArray) {
+        addRoundKey(target, schedule, 0)
+        for (r in 1..(NR - 1)) {
+            subBytes(target)
+            shiftRows(target)
+            mixColumns(target)
+            addRoundKey(target, schedule, r * 4)
+        }
+        subBytes(target)
+        shiftRows(target)
+        addRoundKey(target, schedule, NR * 4)
+    }
+
     /** Encrypt a 16-byte block with a precomputed [Aes256Key.schedule]. Returns 16 bytes. */
     internal fun encryptBlock(block: ByteArray, schedule: IntArray): ByteArray {
         val s = block.copyOf()
-        addRoundKey(s, schedule, 0)
-        for (r in 1..(NR - 1)) {
-            subBytes(s)
-            shiftRows(s)
-            mixColumns(s)
-            addRoundKey(s, schedule, r * 4)
-        }
-        subBytes(s)
-        shiftRows(s)
-        addRoundKey(s, schedule, NR * 4)
+        encryptRounds(s, schedule)
         return s
+    }
+
+    /** Encrypt into a caller-provided 16-byte [out] (reuse across blocks to avoid a per-
+     *  block allocation). [out] may alias [block] (in-place). No allocation on the hot path. */
+    internal fun encryptBlock(block: ByteArray, out: ByteArray, schedule: IntArray) {
+        block.copyInto(out, 0, 0, BLOCK_SIZE)
+        encryptRounds(out, schedule)
     }
 
     /** Encrypt a single 16-byte block with a raw 32-byte key. Returns 16 bytes.
@@ -104,24 +116,35 @@ internal object Aes256 {
      *  must call [expandKey] once and reuse the [Aes256Key] instead. */
     internal fun encryptBlock(key: ByteArray, block: ByteArray): ByteArray = expandKey(key).encryptBlock(block)
 
-    /** Decrypt a 16-byte block with a precomputed [Aes256Key.schedule]. Returns 16 bytes. */
-    internal fun decryptBlock(block: ByteArray, schedule: IntArray): ByteArray {
-        val s = block.copyOf()
+    /** Run the 14 AES inverse rounds, mutating [target] in place. */
+    private fun decryptRounds(target: ByteArray, schedule: IntArray) {
         // Inverse of final round (SubBytes, ShiftRows, AddRoundKey): self-inverse AddRoundKey, then InvShiftRows, InvSubBytes.
-        addRoundKey(s, schedule, NR * 4)
-        invShiftRows(s)
-        invSubBytes(s)
+        addRoundKey(target, schedule, NR * 4)
+        invShiftRows(target)
+        invSubBytes(target)
         // Inverse of inner round (SubBytes, ShiftRows, MixColumns, AddRoundKey(r)):
         // reverse order with each op inverted.
         for (r in (NR - 1) downTo 1) {
-            addRoundKey(s, schedule, r * 4)
-            invMixColumns(s)
-            invShiftRows(s)
-            invSubBytes(s)
+            addRoundKey(target, schedule, r * 4)
+            invMixColumns(target)
+            invShiftRows(target)
+            invSubBytes(target)
         }
         // Inverse of initial AddRoundKey(0).
-        addRoundKey(s, schedule, 0)
+        addRoundKey(target, schedule, 0)
+    }
+
+    /** Decrypt a 16-byte block with a precomputed [Aes256Key.schedule]. Returns 16 bytes. */
+    internal fun decryptBlock(block: ByteArray, schedule: IntArray): ByteArray {
+        val s = block.copyOf()
+        decryptRounds(s, schedule)
         return s
+    }
+
+    /** Decrypt into a caller-provided 16-byte [out] (reuse across blocks). [out] may alias [block]. */
+    internal fun decryptBlock(block: ByteArray, out: ByteArray, schedule: IntArray) {
+        block.copyInto(out, 0, 0, BLOCK_SIZE)
+        decryptRounds(out, schedule)
     }
 
     /** Decrypt with a raw 32-byte key (re-expands — one-shot/KAT use only). */
@@ -246,6 +269,13 @@ internal class Aes256Key internal constructor(private val schedule: IntArray) {
     /** Encrypt a 16-byte block using the precomputed schedule (no re-expansion). */
     fun encryptBlock(block: ByteArray): ByteArray = Aes256.encryptBlock(block, schedule)
 
+    /** In-place variant: writes 16 bytes into [out] (reuse one buffer across many blocks
+     *  to drop per-block allocations). [out] may alias [block] (in-place). */
+    fun encryptBlock(block: ByteArray, out: ByteArray): Unit = Aes256.encryptBlock(block, out, schedule)
+
     /** Decrypt a 16-byte block using the precomputed schedule (no re-expansion). */
     fun decryptBlock(block: ByteArray): ByteArray = Aes256.decryptBlock(block, schedule)
+
+    /** In-place variant (see [encryptBlock]). */
+    fun decryptBlock(block: ByteArray, out: ByteArray): Unit = Aes256.decryptBlock(block, out, schedule)
 }
