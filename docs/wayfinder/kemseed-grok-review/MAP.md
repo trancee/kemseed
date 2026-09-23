@@ -82,7 +82,9 @@ OpenSSL-backed oracles + `AdPduTest` + `Hmb1HandshakeTest`, then
 These are the open child tickets; claimed-by-assignee = in progress. Blocked tickets are
 listed in their bodies.
 
-- D11 [`grilling/HITL`] — Native AES-256-GCM fast-path strategy (A defer-pure vs B expect/actual ship-now); R1 resolved.
+- D11 [`grilling/HITL`, DECIDED+RESOLVED `b351dc9`] — Owner chose **B**. expect/actual AES-256-ECB dispatch seam shipped (pure-Kotlin reference actuals on android/iOS, green-gated); HW backends deferred to D11.1/D11.2 (device-gated, can't be host-KAT'd per R1). Unblocks D5 posture; D7 gated on D11.1/D11.2.
+- D11.1 [`task`, OPEN — device-gated] — iOS native AES-256-ECB via CommonCrypto `CCCrypt` cinterop on `iosArm64` (HW AES on arm64; CryptoKit Swift-only → CC shim). Needs iOS device byte-exact + CT test vs FIPS-197/NIST-GCM KATs. Blocked: D11 + iOS device (R1).
+- D11.2 [`task`, OPEN — device-gated] — Android native AES via arm64 AES-ACLE (`<arm_acle.h>`, NDK) on `androidNativeArm64` (NOT Keystore — per-key keygen/init overhead loses on tiny BLE PDUs); key schedule stays software (no AES keygen assist). Needs Android device byte-exact + CT test. Blocked: D11 + `androidNativeArm64` target + NDK + Android device (R1/R2).
 - D2 [`grilling/HITL`] — Add `iosSimulatorArm64` target (CI/dev-ex) vs Const. E1 device-only.
 - T1 [`task`, RESOLVED `59c620e`] — AES/GCM alloc optimizations: in-place AES (ctrTransform reuses one 16B ks buffer; D11/B native path now has a pure reference) + pre-sized `ct‖tag` in `seal` GREEN; defer `open` `copyOfRange` slice (carries to D7/perf).
 - D15 [`grilling/HITL`, blocked on #20 + R3] — Adopt kompact for Phase-1b PDV envelope? (R3 gates cleared; still awaits #20 1b framing).
