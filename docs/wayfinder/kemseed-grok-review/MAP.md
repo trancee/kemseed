@@ -84,7 +84,7 @@ listed in their bodies.
 
 - D11 [`grilling/HITL`] — Native AES-256-GCM fast-path strategy (A defer-pure vs B expect/actual ship-now); R1 resolved.
 - D2 [`grilling/HITL`] — Add `iosSimulatorArm64` target (CI/dev-ex) vs Const. E1 device-only.
-- T1 [`task`] — AES/GCM alloc optimizations (in-place block + pre-sized `ct‖tag` + drop `copyOfRange`).
+- T1 [`task`, RESOLVED `59c620e`] — AES/GCM alloc optimizations: in-place AES (ctrTransform reuses one 16B ks buffer; D11/B native path now has a pure reference) + pre-sized `ct‖tag` in `seal` GREEN; defer `open` `copyOfRange` slice (carries to D7/perf).
 - D15 [`grilling/HITL`, blocked on #20 + R3] — Adopt kompact for Phase-1b PDV envelope? (R3 gates cleared; still awaits #20 1b framing).
 - D7 [`grilling`, blocked on D11] — GHASH acceleration target (native pmull/CLMUL vs pure table/Karatsuba); R2 feasibility confirmed.
 - D14 [`grilling`, blocked on #20] — Public API surface exposure (block on Phase-1b framing OR ship minimal seal/open).
