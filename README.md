@@ -35,6 +35,12 @@ included Gradle wrapper (9.7.1):
 - `:compileKotlinIos` — KMP iOS binary target (needs macOS + Xcode).
 - `:spotlessCheck` — ktfmt (`kotlinlangStyle`) format gate, `ratchetFrom = main`.
 
+- `:benchmarkMlKem` — pure-Kotlin ML-KEM-512 host benchmark (wall time + HotSpot
+  thread-allocated bytes). Runs `MlKem512Benchmark` on the Android host test JVM:
+  ```bash
+  ./gradlew benchmarkMlKem
+  ```
+
 ## Q1 repository gates (Constitution Q1)
 
 - **Formatter:** Spotless + ktfmt 0.64 (`kotlinlangStyle`) on both `.kt` and `.kts`; pinned
