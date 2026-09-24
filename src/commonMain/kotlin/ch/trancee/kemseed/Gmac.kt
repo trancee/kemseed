@@ -31,35 +31,44 @@ internal object Gmac {
 
     // ---- GHASH field arithmetic: NIST SP 800-38D Algorithm 2 ----
     // byte 0 = leftmost bit = x^0 (NIST convention); reduction 0xE1 into byte 0.
+    // Operands are held as two 64-bit Long limbs (hi = bytes 0-7, lo = bytes 8-15), so the
+    // 128-iteration schoolbook runs on word ops (~4x fewer byte ops than a per-byte loop).
+    // Control flow is fixed (128 iters) and the per-bit conditional is a *masked* Long xor --
+    // no secret-dependent branch, so this is constant-time and avoids the cache timing of a
+    // lookup-table GHASH (whose index would be the secret accumulator). Byte-exact vs the
+    // OpenSSL oracle (Aes256GcmTest: 128 random vectors + V1-V6 goldens).
+    private fun bytesToLong(b: ByteArray, off: Int): Long {
+        var v = 0L
+        for (i in 0 until 8) v = (v shl 8) or ((b[off + i].toInt() and 0xFF).toLong())
+        return v
+    }
+
+    private fun longToBytes(v: Long, b: ByteArray, off: Int) {
+        for (i in 0 until 8) b[off + 7 - i] = (v ushr (i * 8)).toByte()
+    }
+
     private fun ghashMul(x: ByteArray, h: ByteArray): ByteArray {
+        val xHi = bytesToLong(x, 0)
+        val xLo = bytesToLong(x, 8)
+        var zHi = 0L
+        var zLo = 0L
+        var vHi = bytesToLong(h, 0)
+        var vLo = bytesToLong(h, 8)
+        for (i in 0 until 128) {
+            val bit = if (i < 64) (xHi ushr (63 - i)) and 1L else (xLo ushr (127 - i)) and 1L
+            val mask = -bit // 0L or -1L -- fixed control flow (CT)
+            zHi = zHi xor (vHi and mask)
+            zLo = zLo xor (vLo and mask)
+            val carry = vLo and 1L // rightmost bit of v (x^0) shifts out
+            val vLoNew = (vLo ushr 1) or ((vHi and 1L) shl 63)
+            val vHiNew = (vHi ushr 1) xor ((0xE1L shl 56) and (-carry)) // reduce into byte 0
+            vHi = vHiNew
+            vLo = vLoNew
+        }
         val z = ByteArray(BLOCK_SIZE)
-        val v = h.copyOf()           // operands are not mutated
-        for (i in 0 until 128) {     // bit position left→right (x⁰ … x¹²⁷)
-            if (ghashBit(x, i) == 1) {
-                for (j in 0 until BLOCK_SIZE) z[j] = (z[j].toInt() xor v[j].toInt()).toByte()
-            }
-            val carry = ghashBit(v, 127)    // rightmost bit of v (byte15 LSB) = x¹²⁷ coefficient
-            ghashRightShift1(v)             // v := v >> 1  (multiply by x)
-            if (carry == 1) v[0] = (v[0].toInt() xor 0xE1).toByte()   // reduce into byte 0
-        }
+        longToBytes(zHi, z, 0)
+        longToBytes(zLo, z, 8)
         return z
-    }
-
-    /** i-th bit from the left of [a] (i=0 ⇒ byte0 MSB = x⁰, NIST convention). */
-    private fun ghashBit(a: ByteArray, i: Int): Int {
-        val byteIndex = i ushr 3
-        val bitInByte = 7 - (i and 7)
-        return (a[byteIndex].toInt() ushr bitInByte) and 1
-    }
-
-    /** In-place right-shift of the 128-bit big-endian value [a] by one bit. */
-    private fun ghashRightShift1(a: ByteArray) {
-        for (j in 15 downTo 1) {
-            val hi = a[j - 1].toInt() and 0xFF
-            val lo = a[j].toInt() and 0xFF
-            a[j] = ((lo ushr 1) or ((hi and 1) shl 7)).toByte()
-        }
-        a[0] = ((a[0].toInt() and 0xFF) ushr 1).toByte()
     }
 
     /** GHASH_H polynomial-evaluation fold over [blocks] (length must be a non-zero
