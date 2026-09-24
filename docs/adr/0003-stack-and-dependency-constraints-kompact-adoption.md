@@ -472,3 +472,24 @@ emits exactly one platform actual per KSP task, preventing expect/actual duplica
 state as GREEN-only-with-bridge) is superseded by this amendment — 0.1.6 resolves defect #4
 upstream and the bridge is dropped; the committed tree is GREEN on a clean environment
 resolving from Maven Central.
+
+---
+
+### ADR-0003 v1.6 amendment (2026-09-24) — kompact 0.1.7 published; v1.5 gates cleared, no bump at D11
+
+**Finding (R3):** `ch.trancee.kompact:kompact` + `kompact-ksp` **0.1.7** is now on Maven Central
+(2026-09-17). The v1.4 "wait for 0.1.6" gate is **superseded** — v1.5 already adopted 0.1.6 (PR #51
+defect-#4 fix), dropped the `mavenLocal()` bridge, and the committed tree is GREEN on a clean
+environment resolving from Maven Central (`:testAndroidHostTest :compileKotlinIos spotlessCheck`
+→ `BUILD SUCCESSFUL in 23s`, 94/94 tests).
+
+**No catalog bump required at D11's scope.** 0.1.7's availability is recorded for the D15
+re-evaluation; kemseed's green gate and ADR-0001 zero-deps posture are unchanged on
+`kompact` 0.1.6. `gradle/libs.versions.toml` stays at `kompact = 0.1.6` / `kompactKsp = 0.1.6`.
+Re-evaluate the bump at D15 (Phase-1b AD-PDU hardening) if 0.1.7 ships a generator feature
+kemseed needs then.
+
+**D11=B interplay:** the `expect/actual Aes256Native` dispatch seam (D11.1 iOS / D11.2 Android HW
+backends, D7-pure GHASH) lives in commonMain + platform actuals and is kompact-independent; 0.1.7's
+availability does not alter those gates (R1: native AES is device-KAT-pending; host arithmetic is
+gated by the 128-vector GCM Oracle + the 20 NIST-GCM/GMAC goldens).
