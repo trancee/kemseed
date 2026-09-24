@@ -74,8 +74,10 @@ intermediate, so `androidNativeArm64` pulls `kompact` 0.1.6 — which declares *
 D11.2 cannot ship until one of these resolves. None is a KMP wiring fix I can apply solo:
 
 1. **kompact upstream ships an `androidNativeArm64` variant** (preferred — unblocks D11.2 + the
-   future Android-Native BLE transport path with the AD-PDU layer intact). kompact 0.1.7 does
-   **not**; track a kompact issue / 0.1.8.
+   future Android-Native BLE transport path with the AD-PDU layer intact). kompact 0.1.7 doesn't
+   have it; needs kompact 0.1.8. **Implementation prompt prepared** at
+   `docs/wayfinder/kemseed-grok-review/tickets/11-2-0-kompact-androidarm64-variant-prompt.md`
+   (hand to an AI working in the `ch.trancee.kompact` repo).
 2. **Carve the kompact-AD-PDU layer off `commonMain`** into `androidMain`/`iosMain` (target-scoped)
    so `androidNativeArm64`'s shared commonMain is kompact-free, then add `androidNativeArm64` and
    `exclude group: "ch.trancee.kompact"` from its configs. ⚠️ Architectural: this **breaks** the
