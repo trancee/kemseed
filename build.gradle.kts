@@ -130,3 +130,36 @@ kotlin {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// ML-KEM-512 host benchmark (time + HotSpot allocation via ThreadMXBean).
+// Source: src/androidHostTest/.../MlKem512Benchmark.kt
+//
+//   ./gradlew benchmarkMlKem
+//   ./gradlew testAndroidHostTest --tests 'ch.trancee.kemseed.MlKem512Benchmark'
+// ---------------------------------------------------------------------------
+tasks.register("benchmarkMlKem") {
+    group = "verification"
+    description = "Run pure-Kotlin ML-KEM-512 host benchmark (wall time + thread-allocated bytes)"
+    dependsOn("testAndroidHostTest")
+}
+
+// When running the dedicated benchmark task (or -PbenchmarkMlKem), restrict the
+// host test filter to MlKem512Benchmark so the full 94-test suite is not re-run.
+val runBenchOnly =
+    gradle.startParameter.taskNames.any { name ->
+        name == "benchmarkMlKem" || name.endsWith(":benchmarkMlKem")
+    } || project.hasProperty("benchmarkMlKem")
+
+tasks
+    .matching { it.name == "testAndroidHostTest" }
+    .configureEach {
+        if (!runBenchOnly) return@configureEach
+        if (this is org.gradle.api.tasks.testing.Test) {
+            filter { includeTestsMatching("ch.trancee.kemseed.MlKem512Benchmark*") }
+            testLogging {
+                showStandardStreams = true
+                events("passed", "failed", "standardOut", "standardError")
+            }
+        }
+    }
