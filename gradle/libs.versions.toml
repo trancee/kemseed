@@ -5,7 +5,7 @@
 [versions]
 kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.1.6 was built with (Maven Central)
 agp = "9.4.1"
-kompact = "0.1.6"            # 0.1.4 fixed KSP-2.x service-file registration (0.1.1 was on the legacy path
+kompact = "0.1.7"            # 0.1.4 fixed KSP-2.x service-file registration (0.1.1 was on the legacy path
                             # and invisible to KSP 2.x); 0.1.3+ also fixed the codegen round-handling
                             # (process() re-queues) + added per-source-set `kompact.generate` modes
                             # (common/jvm/ios); 0.1.5 fixed defect #3 (raw ctor val, PR #48); 0.1.6
