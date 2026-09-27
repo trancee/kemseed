@@ -3,14 +3,17 @@
 # Re-evaluate held versions every sprint (per AGENTS.md Kotlin toolchain guidance).
 
 [versions]
-kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.1.6 was built with (Maven Central)
+kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.3.0 is built with (Maven Central)
 agp = "9.4.1"
-kompact = "0.1.6"            # 0.1.4 fixed KSP-2.x service-file registration (0.1.1 was on the legacy path
-                            # and invisible to KSP 2.x); 0.1.3+ also fixed the codegen round-handling
-                            # (process() re-queues) + added per-source-set `kompact.generate` modes
-                            # (common/jvm/ios); 0.1.5 fixed defect #3 (raw ctor val, PR #48); 0.1.6
-                            # fixed defect #4 (actual companion modifier, PR #51). Unlicense KMP
-                            # bit-packing serializer + KSP codegen (ch.trancee.kompact, built w/ Kotlin 2.4.20).
+kompact = "0.3.0"            # 0.3.0 adds `androidNativeArm64` (arm64 HW AES via D11.2) + iosSimulatorArm64
+                            # klib variants — this fixes the D11.2 kompact resolution blocker
+                            # (kompact 0.1.6/0.1.7 published no androidNativeArm64 variant). Built
+                            # with Kotlin 2.4.20 → klib-metadata compatible (no toolchain bump).
+                            # Prior fixes: 0.1.4 KSP-2.x service-file; 0.1.5 defect #3 (PR #48);
+                            # 0.1.6 defect #4 (PR #51). Unlicense KMP bit-packing serializer +
+                            # KSP codegen (ch.trancee.kompact). kompact-ksp 0.3.0 uses kotlinpoet-jvm
+                            # 2.4.0; per-source-set `kompact.generate={jvm|ios|androidArm64}` routing
+                            # preserved — see ADR-0003.
 ksp = "2.3.12"               # KSP version paired with Kotlin 2.4.20 (latest 2.3.x on Maven Central;
                             # no 2.4.x KSP release exists yet). kompact-ksp 0.1.6 was compiled
                             # against this API (KSP 2.3.x binary-compatible across 2.3.10–2.3.12).

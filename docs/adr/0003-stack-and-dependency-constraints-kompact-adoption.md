@@ -493,3 +493,73 @@ kemseed needs then.
 backends, D7-pure GHASH) lives in commonMain + platform actuals and is kompact-independent; 0.1.7's
 availability does not alter those gates (R1: native AES is device-KAT-pending; host arithmetic is
 gated by the 128-vector GCM Oracle + the 20 NIST-GCM/GMAC goldens).
+
+---
+
+### ADR-0003 v1.7 amendment (2026-09-24) — kompact 0.3.0 adopted (0.1.6 → 0.3.0); `AdPduHeader` expect migrated to the 0.3.0 generator shape
+
+Per owner directive "kompact 0.3.0 has been released and should fix your suggestions, check it
+out," `kompact`/`kompact-ksp` were bumped `0.1.6` → `0.3.0` and adopted live.
+
+**Findings (0.3.0):**
+
+- `kompact` 0.3.0 `pom` declares `kotlin-stdlib 2.4.20` → Kotlin 2.4.20-compatible; **no toolchain
+  bump** required (ADR-0001 zero-deps posture unchanged — the kompact *runtime* remains
+  stdlib-only, compile-time-only `kompact-ksp` is not on the device).
+- 0.3.0 **fixes the D11.2 resolution blocker**: `kompact-0.3.0.module` now declares
+  `androidNativeArm64ApiElements-published` + `androidNativeArm64SourcesElements-published`
+  (+ `iosSimulatorArm64*`). Verified: `:cinteropArm64CryptoAndroidArm64` on the `androidArm64`
+  target resolves `-library …/kompact-androidNativeArm64Main-0.3.0.klib` from the cache — the
+  earlier "Could not resolve kompact" failure (0.1.6/0.1.7 shipped no androidNativeArm64 variant)
+  is gone.
+- 0.3.0's processor **recognizes the `androidArm64` mode**: `KompactGenerateMode` (javap on
+  `kompact-ksp-0.3.0.jar`) = `{common, jvm, ios, androidArm64, all}`, with a real emitter
+  `ValueClassGenerator.generateAndroidArm64Actual` (kotlinpoet `FileSpec.builder` + `buildActual$`
+  + conditional `buildMutableActual` + `requireValidLayout(...)`) — **not** a stub.
+- **Generator shape change (0.3.0 vs 0.1.6):** the emitted `AdPduHeader` actual is now
+  `public actual val version/pduType/reserved: Int` (read-only `get() = readBits(...)`) **plus**
+  `public actual fun copy(version: Int, pduType: Int, reserved: Int): AdPduHeader` — i.e. the
+  accessors are `val` and a `copy(...)` builder is added. `kompactKsp 0.3.0` also uses
+  `kotlinpoet-jvm 2.4.0`.
+
+**Migration applied:** kemseed's `expect AdPduHeader` (`src/commonMain/kotlin/ch/trancee/kemseed/pdu/AdPduHeader.kt`)
+was migrated to the 0.3.0 generator contract (this commit): (1) `public var version/pduType/reserved`
+→ `public val version/pduType/reserved` (the `@KompactField` annotations are untouched), and
+(2) added `public fun copy(version: Int, pduType: Int, reserved: Int): AdPduHeader` to the expect
+body (matching the generated `public actual fun copy(...)`). **@KommutModel** remains ON; the per-task
+mode routing (`kspAndroidMain→jvm`, `kspKotlinIos→ios`) is unchanged, with `kspKotlinAndroidArm64→androidArm64`
+left for the D11.2 follow-up (see below).
+
+**Mutation check (confirming the var→val migration is safe):** `grep -rnE "\.(version|pduType|reserved) =" src/`
+is empty — no caller assigns the accessors (`Hmb1Handshake` uses `gmacTag`/`Aes256Gcm`, not
+`AdPduHeader` fields); all writes go through `encodeAdPduHeader`/`create`. The write path is
+`copy`/`create`/`encodeAdPduHeader`, so read-only accessors are sound.
+
+**Green gate (committed tree, kompact 0.3.0 + expect migration):**
+`/opt/homebrew/bin/gradle :testAndroidHostTest :compileKotlinIos spotlessCheck --rerun-tasks
+--console=plain --no-daemon` → **BUILD SUCCESSFUL in 23s**, `TOTAL tests=94 skipped=0 failures=0
+errors=0`. `kspAndroidMain`/`kspKotlinIos` emit `AdPduHeaderGenJvm.kt`/`AdPduHeaderGenIos.kt` matching
+the migrated `val`+`copy` expect; `compileKotlinIos`/`compileAndroidMain` succeed.
+
+**D11.2 status (deferred from this amendment):** 0.3.0 fixes the kompact *variant* resolution
+(klib present) and the processor *recognizes* the `androidArm64` mode, but adopting the
+`androidNativeArm64` target end-to-end is **still blocked** by two env issues documented in
+`tickets/11-2-android-nativeacl-aesgcm-fastpath.md`:
+
+1. **KSP → platform actual gap:** the `kspKotlinAndroidArm64` task runs (mode `androidArm64` routed)
+   but emits **no** `AdPduHeaderGenAndroidArm64.kt` into
+   `build/generated/ksp/androidArm64/` — the `generateAndroidArm64Actual` emitter exists (javap
+   confirmed) but is not dispatched for this target (mode-arg propagation or mode→emitter mapping
+   gap in 0.3.0's dispatch). `:compileKotlinAndroidArm64` consequently fails with
+   "The 'expect' declaration 'AdPduHeader' has no 'actual' declaration … for Native".
+2. **arm_neon AES-ACLE cinterop binding:** `<arm_acle.h>`/`<arm_neon.h>` resolve under NDK
+   cinterop (4859-byte knm), but the AES crypto-extension intrinsics (`vaeseq_u8`/`vaesmcq_u8`/
+   `vaesimcq_u8`) + the `uint8x16_t` vector types are **not** bound — they are `#ifdef
+   __ARM_FEATURE_CRYPTO`-gated and the NDK cinterop clang does not enable `+crypto` (the `.def`
+   `compilerOpts = -march=armv8-a+crypto` is not honored by the cinterop header parse). The 4859-byte
+   knm contains only the general arm_acle intrinsics (`__rbit`/`__clz`/`__rev`…), no AES/PMULL.
+
+D11.2 therefore stays deferred; the arm64 AES-256 intrinsic C-shim (compiled with `-march=armv8-a+crypto`
+via a bound C function, avoiding the SIMD-vector-type cinterop gap) is the recorded follow-up path in
+the 11-2 ticket. This amendment commits only the green, host-gated kompact 0.3.0 adoption.
+
