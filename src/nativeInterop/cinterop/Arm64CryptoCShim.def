@@ -1,0 +1,11 @@
+# D11.2 part-2 C-shim for HW AES-256-ECB (arm64 AES-ACLE).
+# Binds ONE plain-C symbol `aes256_enc1block` (see Aes256_arm64.h) so KMP cinterop does NOT
+# have to bind the uint8x16_t SIMD vector types (the 4859-byte-knm gap). The arm_neon intrinsics
+# stay INSIDE Aes256_arm64.c (compiled here by cinterop's clang with +crypto). The round-key
+# schedule is the proven kotlin Aes256.expandKey (software); only the AES BLOCK is HW.
+# NOTE: inert today — the pure Aes256Native actual (src/androidArm64Main) ships instead. Wire via
+#   kotlin { androidNativeArm64("androidArm64") { cinterops { create("Arm64CryptoCShim") } } }
+# in D11.2 part-2 (on-device KAT).
+headers = Aes256_arm64.h
+cSource = Aes256_arm64.c
+compilerOpts = -march=armv8-a+crypto
