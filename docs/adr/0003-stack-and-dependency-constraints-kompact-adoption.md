@@ -541,25 +541,30 @@ is empty — no caller assigns the accessors (`Hmb1Handshake` uses `gmacTag`/`Ae
 errors=0`. `kspAndroidMain`/`kspKotlinIos` emit `AdPduHeaderGenJvm.kt`/`AdPduHeaderGenIos.kt` matching
 the migrated `val`+`copy` expect; `compileKotlinIos`/`compileAndroidMain` succeed.
 
-**D11.2 status (deferred from this amendment):** 0.3.0 fixes the kompact *variant* resolution
-(klib present) and the processor *recognizes* the `androidArm64` mode, but adopting the
-`androidNativeArm64` target end-to-end is **still blocked** by two env issues documented in
-`tickets/11-2-android-nativeacl-aesgcm-fastpath.md`:
+**D11.2 status (part-1 foothold GREEN, this session):** 0.3.0 fixes the kompact *variant*
+resolution (klib present). The earlier "mode→emitter dispatch gap" diagnosis was **incorrect** — the
+real blocker was that kompact-ksp was **never loaded** on `kspKotlinAndroidArm64`: KMP creates the
+`kspKotlinAndroidArm64ProcessorClasspath` config, but (like `kspKotlinIos`) native targets have no
+eager `kspAndroidArm64(...)` DSL accessor, so kemseed must bind the processor by config name in an
+`afterEvaluate { dependencies { add("kspKotlinAndroidArm64ProcessorClasspath", libs.kompactKsp) } }`
+block — the *same* manual bind that makes iOS codegen work. Once bound, the `androidArm64` mode +
+the real `generateAndroidArm64Actual` emitter (javap-confirmed, non-stub) emit
+`AdPduHeaderGenAndroidArm64.kt` (plain value class, `val`+`copy`) into
+`build/generated/ksp/androidArm64/androidArm64Main/kotlin/ch/trancee/kemseed/pdu/`, and
+`:compileKotlinAndroidArm64` → **BUILD SUCCESSFUL**. The pure-kotlin `Aes256Native` actual
+(`src/androidArm64Main`, `Aes256.expandKey` schedule + in-place `encryptBlock`) ships as the
+host-gated backend (R1: the 128-vector GCM Oracle + 20 NIST-GCM/GMAC goldens + 2000-pair GHASH
+cross-check pin it on the JVM host).
 
-1. **KSP → platform actual gap:** the `kspKotlinAndroidArm64` task runs (mode `androidArm64` routed)
-   but emits **no** `AdPduHeaderGenAndroidArm64.kt` into
-   `build/generated/ksp/androidArm64/` — the `generateAndroidArm64Actual` emitter exists (javap
-   confirmed) but is not dispatched for this target (mode-arg propagation or mode→emitter mapping
-   gap in 0.3.0's dispatch). `:compileKotlinAndroidArm64` consequently fails with
-   "The 'expect' declaration 'AdPduHeader' has no 'actual' declaration … for Native".
-2. **arm_neon AES-ACLE cinterop binding:** `<arm_acle.h>`/`<arm_neon.h>` resolve under NDK
-   cinterop (4859-byte knm), but the AES crypto-extension intrinsics (`vaeseq_u8`/`vaesmcq_u8`/
-   `vaesimcq_u8`) + the `uint8x16_t` vector types are **not** bound — they are `#ifdef
-   __ARM_FEATURE_CRYPTO`-gated and the NDK cinterop clang does not enable `+crypto` (the `.def`
-   `compilerOpts = -march=armv8-a+crypto` is not honored by the cinterop header parse). The 4859-byte
-   knm contains only the general arm_acle intrinsics (`__rbit`/`__clz`/`__rev`…), no AES/PMULL.
-
-D11.2 therefore stays deferred; the arm64 AES-256 intrinsic C-shim (compiled with `-march=armv8-a+crypto`
-via a bound C function, avoiding the SIMD-vector-type cinterop gap) is the recorded follow-up path in
-the 11-2 ticket. This amendment commits only the green, host-gated kompact 0.3.0 adoption.
+**D11.2 part-2 STILL DEFERRED** (device-KAT phase only blocker): arm_neon AES-ACLE cinterop
+binding — `<arm_acle.h>`/`<arm_neon.h>` resolve under NDK cinterop (4859-byte knm), but the AES
+crypto-extension intrinsics (`vaeseq_u8`/`vaesmcq_u8`/`vaesimcq_u8`) + the `uint8x16_t` vector
+types are **not** bound — they are `#ifdef __ARM_FEATURE_CRYPTO`-gated and the NDK cinterop clang
+does not enable `+crypto` (`.def` `compilerOpts = -march=armv8-a+crypto` not honored by cinterop
+header parse). The 4859-byte knm contains only general arm_acle intrinsics (`__rbit`/`__clz`/
+`__rev`…), no AES/PMULL. Recorded follow-up: compile the AES-256 block in a `.c` with
+`-march=armv8-a+crypto` and bind only a plain C function (sidesteps the SIMD-vector-type cinterop
+gap) — canonical `vaeseq_u8`/`vaesmcq_u8` AES-256 reference in `tickets/11-2 §"arm64 AES-256
+reference"`. This amendment commits the green, host-gated kompact 0.3.0 adoption (D11.2 part-1
+foothold committed separately).
 

@@ -60,14 +60,26 @@ afterEvaluate {
     dependencies {
         add("kspIos", libs.kompactKsp)
         add("kspKotlinIosProcessorClasspath", libs.kompactKsp)
+        // D11.2: bind kompact-ksp to the androidNativeArm64 target's KSP configs. KGP 2.4 emits no
+        // `kspAndroidArm64(...)` DSL accessor for native targets (mirrors the ios laziness above),
+        // so bind by config name. `kspKotlinAndroidArm64ProcessorClasspath` is the classpath the
+        // `kspKotlinAndroidArm64` task reads; WITHOUT this bind the processor never loads and no
+        // Gen actual is emitted (the per-task `kompact.generate=androidArm64` mode arg is inert).
+        add("kspAndroidArm64", libs.kompactKsp)
+        add("kspKotlinAndroidArm64ProcessorClasspath", libs.kompactKsp)
     }
 }
 
-// Per-KSP-task mode arg for the generator (0.1.6, defects #3+#4 fixed). The processor reads
-// the mode from the `kompact.generate=<mode>` option; default mode "all" emits the expect + BOTH
-// actuals into one source set -> duplicates, so route per platform task:
-//   kspAndroidMain -> `kompact.generate=jvm` -> @JvmInline actual -> androidMain
-//   kspKotlinIos   -> `kompact.generate=ios` -> plain actual      -> iosMain
+// Per-KSP-task mode arg. Default "all" mode emits the expect + BOTH actuals into one source set
+// -> duplicates, so route per platform task:
+//   kspAndroidMain -> jvm -> @JvmLine actual -> androidMain
+//   kspKotlinIos -> ios -> plain native actual -> iosMain
+//   kspKotlinAndroidArm64 -> androidArm64 -> plain native actual -> androidArm64Main
+// kompact-ksp 0.3.0: the `androidArm64` mode + `generateAndroidArm64Actual` emitter are real, but
+// a Gen file only emits once the processor LOADS on the task, bound below via
+// kspKotlinAndroidArm64ProcessorClasspath (KMP has no eager `kspAndroidArm64(...)` accessor for
+// native targets). R1: native HW-aes device-KAT-pending; arm_neon cinterop gap deferred, see 11-2.
+// See tickets/11-2-android-nativeacl-aesgcm-fastpath.md + ADR-0003 v1.7.
 // kspMetadata (common) is left unarged -> the processor does not run there; the @KommutModel
 // expect in commonMain is the schema (not regenerated; the processor emits only actuals per mode).
 afterEvaluate {
@@ -76,6 +88,7 @@ afterEvaluate {
             when (name) {
                 "kspAndroidMain" -> "jvm"
                 "kspKotlinIos" -> "ios"
+                "kspKotlinAndroidArm64" -> "androidArm64"
                 else -> return@configureEach
             }
         commandLineArgumentProviders.add(
@@ -101,6 +114,17 @@ kotlin {
     // No iOS simulator target (iosSimulatorArm64 / iosX64) — BLE does not
     // work in the iOS simulator.
     iosArm64("ios")
+    // D11.2: Android arm64 native target. kompact 0.3.0 publishes the androidNativeArm64 klib
+    // variant (fixes the 0.1.6/0.1.7 resolution blocker) + kompact-ksp 0.3.0 recognizes the
+    // `androidArm64` mode (KompactGenerateMode) + ships `generateAndroidArm64Actual`. The processor
+    // is bound to this target's `kspKotlinAndroidArm64` classpath manually (afterEvaluate,
+    // mirroring
+    // ios) so it loads + the `kompact.generate=androidArm64` mode arg dispatches the real emitter
+    // (AdPduHeaderGenAndroidArm64.kt — plain value class, compiles on Native). HW AES
+    // (arm_neon AES-ACLE) is deferred — see tickets/11-2…fastpath.md. Source set
+    // `androidArm64Main`;
+    // compile task `compileKotlinAndroidArm64`.
+    androidNativeArm64("androidArm64")
     sourceSets {
         val commonMain by getting {
             dependencies {
@@ -123,6 +147,10 @@ kotlin {
             compilerOptions { freeCompilerArgs.addAll("-Xexpect-actual-classes") }
         }
         val iosMain by getting {
+            compilerOptions { freeCompilerArgs.addAll("-Xexpect-actual-classes") }
+        }
+        val androidArm64Main by getting {
+            // expect/actual value classes (AdPduHeader + kommut ScalarType) on kotlin/Native.
             compilerOptions { freeCompilerArgs.addAll("-Xexpect-actual-classes") }
         }
         val commonTest by getting {

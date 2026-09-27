@@ -129,7 +129,7 @@ static inline void aes256_enc_block(uint8x16_t *state, const uint8x16_t rk[15]) 
 
 ---
 
-## Status update (2026-09-24 — kompact 0.3.0 adopted; D11.2 still deferred)
+## Status update (2026-09-24 — kompact 0.3.0 adopted; D11.2 part-1 foothold GREEN)
 
 Owner directive was "kompact 0.3.0 has been released and should fix your suggestions, check it
 out." Checked out and adopted (see ADR-0003 v1.7). **What 0.3.0 resolves + what still blocks:**
@@ -143,33 +143,41 @@ failure (Attempt log above) is gone. `:cinteropArm64CryptoAndroidArm64` now reso
 ships the arm64-native klib. So owner Decision-required block #1 (kompact variant) is **green-cleared**
 by 0.3.0; option 1 (defer to "kompact ships the variant") is satisfied.
 
-### STILL BLOCKED — two env issues (D11.2 not green-committed this session)
+### RESOLVED (D11.2 part-1 foothold GREEN): KSP → platform `AdPduHeader` actual = processor classpath bind
 
-0.3.0 fixes the variant, but end-to-end `:compileKotlinAndroidArm64` still fails:
+The prior "0.3.0 mode→emitter dispatch defect" diagnosis was **wrong**. Root cause: kompact-ksp was
+**never loaded** on `kspKotlinAndroidArm64`. The `androidArm64` mode + `generateAndroidArm64Actual`
+emitter ARE real (javap: `KompactGenerateMode` = {common,jvm,ios,androidArm64,all};
+`ValueClassGenerator.generateAndroidArm64Actual` = real kotlinpoet `FileSpec` emitter —
+`buildActual$` / `buildMutableActual` / `requireValidLayout`, non-stub) — they just never ran, because
+KMP creates `kspKotlinAndroidArm64ProcessorClasspath` but (no eager `kspAndroidArm64(...)` accessor via
+the Kotlin-DSL, mirroring ios per ADR-0003) kemseed never bound kompact-ksp to it → empty processor
+classpath → the `kompact.generate=androidArm64` mode arg on `kspKotlinAndroidArm64` was inert → no
+`AdPduHeaderGenAndroidArm64.kt` (empty dir) → `:compileKotlinAndroidArm64` failed ("no 'actual'").
+**Fix (committed with the foothold):** bind the processor in `build.gradle.kts`'s
+`afterEvaluate { dependencies { add("sspKotlinAndroidArm64ProcessorClasspath", libs.kompactKsp) } }`
+— the same manual bind that makes iOS codegen work. Now the emitter fires →
+`AdPduHeaderGenAndroidArm64.kt` (plain value class, `val` + `copy`, matches the migrated expect) →
+`:compileKotlinAndroidArm64` → **BUILD SUCCESSFUL**, 0 generated-actual regressions. (Confirms
+`kspKotlinAndroidArm64` is a `KspAATask` and `commandLineArgumentProviders` reaches it via the shared
+`withType<KspAATask>` block; the `when(name)` routing is correct — the processor simply wasn't
+class-loaded.)
 
-- **KSP → platform `AdPduHeader` actual gap:** the `kspKotlinAndroidArm64` task runs with mode
-  `androidArm64` routed (via `KspAATask.commandLineArgumentProviders`, see `build.gradle.kts`), but it
-  emits **no** `AdPduHeaderGenAndroidArm64.kt` into `build/generated/ksp/androidArm64/` (the dir is
-  created empty). kompact-ksp 0.3.0's `KompactGenerateMode` enum **does** contain `androidArm64`
-  (javap: `{common,jvm,ios,androidArm64,all}`), and `ValueClassGenerator.generateAndroidArm64Actual`
-  is a real kotlinpoet `FileSpec` emitter (javap — `buildActual$` + `buildMutableActual` +
-  `requireValidLayout`), **not** a stub — yet it is never dispatched for `kspKotlinAndroidArm64`.
-  `:compileKotlinAndroidArm64` then fails: `The 'expect' declaration 'AdPduHeader' has no 'actual'
-  declaration in module '<commonMain> for Native'`. So 0.3.0 recognizes the mode + has the emitter but
-  does not wire mode→emitter for the arm64 native target (a 0.3.0 dispatch defect, not a kemseed
-  wiring bug — the `kspKotlinIos -> "ios"` routing emits `AdPduHeaderGenIos.kt` correctly).
+### STILL DEFERRED (D11.2 part-2, device-KAT phase): arm_neon AES-ACLE cinterop binding
 
-- **arm_neon AES-ACLE cinterop binding:** with the variant fixed, the cinterop now RUNS. Added
-  `androidNativeArm64("androidArm64") { compilations.all { cinterops { create("Arm64Crypto") } } }` +
-  `src/nativeInterop/cinterop/Arm64Crypto.def` (`headers = arm_acle.h arm_neon.h`). Probe:
-  `:cinteropArm64CryptoAndroidArm64` → `BUILD SUCCESSFUL` but the knm is **only 4859 bytes** and
-  contains the *general* arm_acle intrinsics (`__rbit`/`__clz`/`__rev`…) — **no** `vaeseq_u8`/
-  `vaesmcq_u8`/`vaesimcq_u8` (AES) or `vmull_p64`/PMULL or the `uint8x16_t`/`uint64x2_t` vector types.
-  Those are `#ifdef __ARM_FEATURE_CRYPTO`-gated; the NDK cinterop clang does **not** enable `+crypto`,
-  and the `.def` `compilerOpts = -march=armv8-a+crypto` is **not** honored by cinterop's header
-  parse (knm unchanged after adding the flag). So the AES intrinsics the C-shim / HW actual depends on
-  are **not bound** to `platform.Arm64Crypto` — the same class of "KMP cinterop can't bind the
-  header's SIMD/crypto declarations" failure seen on iOS (D11.1).
+The committed foothold ships the **pure** `Aes256Native` actual (`src/androidArm64Main`) — NO cinterop,
+NO `Arm64Crypto.def`. The KSP→actual gap above is closed; the *only* remaining blocker is binding the
+arm_neon AES intrinsics. With the variant fixed, the cinterop probe (`Arm64Crypto.def` with
+`headers = arm_acle.h arm_neon.h`, task `:cinteropArm64CryptoAndroidArm64`) RUNS → `BUILD SUCCESSFUL`,
+but the knm is **only 4859 bytes** — it contains the *general* arm_acle intrinsics (`__rbit`/`__clz`/
+`__rev`…) and **no** `vaeseq_u8`/`vaesmcq_u8`/`vaesimcq_u8` (AES) or `vmull_p64`/PMULL or the
+`uint8x16_t`/`uint64x2_t` vector types. Those are `#ifdef __ARM_FEATURE_CRYPTO`-gated; the NDK
+cinterop clang does **not** enable `+crypto`, and the `.def` `compilerOpts = -march=armv8-a+crypto` is
+**not** honored by cinterop's header parse (knm unchanged). So the AES-ACLE intrinsics the HW actual
+depends on are **not bound** to `platform.Arm64Crypto` — the same "KMP cinterop can't bind the
+header's SIMD/crypto declarations" class as iOS D11.1. Follow-up: compile the AES-256 block in a
+`.c` with `-march=armv8-a+crypto` + bind one plain C function (sidesteps the `uint8x16_t` gap);
+canonical `vaesseq_u8`/… AES-256 reference in §"arm64 AES-256 reference".
 
 ### Q&A: "instead of `kspKotlinAndroidArm64` can we just call it `kspKotlinAndroid` like with iOS?"
 
@@ -189,16 +197,15 @@ ineffective because of the 0.3.0 dispatch gap above, not the name).
 ### Current posture
 
 The arm64 AES-256 intrinsic C-shim (canonical reference, §"arm64 AES-256 reference" above) is
-**preserved as a DRAFT**; porting it to a `platform.Arm64Crypto`-consuming `actual` is gated on
-unblocking (1) kompact-ksp emitting `AdPduHeaderGenAndroidArm64` (upstream 0.3.x dispatch fix, or
-`androidMain`-scoped kompact carve-out per old Decision-required #2) **and** (2) the NDK cinterop
-binding the AES-ACLE intrinsics (the C-shim path — compile a `.c` with `-march=armv8-a+crypto` and
-bind only a plain C function, sidestepping the `uint8x16_t` vector-type cinterop gap — is the
-recommended follow-up; the iOS CommonCrypto shim `11-1`/`11-2-0` tickets hold the parallel cinterop
-notes).
+**preserved as a DRAFT**; porting it to a `platform.Arm64Crypto`-consuming `actual` is gated on the
+part-2 arm_neon cinterop blocker above (the KSP→actual gap is closed). Recommended follow-up: compile
+the AES-256 block in a `.c` with `-march=armv8-a+crypto` + bind one plain C function (sidesteps the
+`uint8x16_t` vector-type cinterop gap); the iOS CommonCrypto shim notes live in tickets `11-1`/
+`11-2-0`.
 
-**Green gate this session:** `:testAndroidHostTest :compileKotlinIos spotlessCheck --rerun-tasks` →
-`BUILD SUCCESSFUL in 23s` (94/94). The `androidNativeArm64` target + `Arm64Crypto.def` + the pure
-`androidArm64Main` actual probe were **reverted** (the tree is clean) so D11.2 ships only when both
-blockers above clear — no red target is committed.
-
+**Green gate (D11.2 part-1 foothold, committed this session):**
+`:testAndroidHostTest :compileKotlinIos :compileKotlinAndroidArm64 spotlessCheck --rerun-tasks` →
+`BUILD SUCCESSFUL` (94 host tests; `AdPduHeaderGenAndroidArm64.kt` emitted; `compileKotlinAndroidArm64`
+green). The `androidNativeArm64("androidArm64")` target + the `kspKotlinAndroidArm64ProcessorClasspath`
+processor bind + the pure `Aes256Native` `androidArm64Main` actual are **committed green**; only the HW
+arm_neon AES-ACLE `actual` + device KAT stay deferred to part-2 (no unproven crypto ships).
