@@ -209,3 +209,60 @@ the AES-256 block in a `.c` with `-march=armv8-a+crypto` + bind one plain C func
 green). The `androidNativeArm64("androidArm64")` target + the `kspKotlinAndroidArm64ProcessorClasspath`
 processor bind + the pure `Aes256Native` `androidArm64Main` actual are **committed green**; only the HW
 arm_neon AES-ACLE `actual` + device KAT stay deferred to part-2 (no unproven crypto ships).
+
+---
+
+## D11.2 part-2b design: Aes256Native HW-actual swap (C-shim wired) — DRAFT
+
+### State (committed `23979a7`)
+`src/nativeInterop/cinterop/Aes256_arm64.{c,h}` + `Arm64CryptoCShim.def` are committed but
+**inert** (not wired into any `cinterops {}` block; `compileKotlinAndroidArm64` still uses the pure
+`Aes256Native` actual — `BUILD SUCCESSFUL` green gate intact). This realizes the §"Current posture"
+recommended follow-up ("compile the AES-256 block in a `.c` with `-march=armv8-a+crypto` + bind one
+plain C function").
+
+### Host-verification of the C-shim (NDK-free)
+- `clang -O2 -arch arm64 -march=armv8-a+crypto -S -emit-llvm` → IR `define @aes256_enc1block`
+  lowering `vaeseq_u8`/`vaesmcq_u8` to `@llvm.aarch64.crypto.aese`/`aesmc` (real AES-ACLE hardware
+  ops, not soft-float).
+- `clang --target=aarch64-linux-android21 -march=armv8-a+crypto -c` → 1120-byte `.o`, symbol
+  `aes256_enc1block` bound (`nm`/`llvm-nm` absent -> verified via `strings` + IR + `otool`).
+- Intrinsic spelling byte-verified (`od`) vs §"arm64 AES-256 reference": `vaeseq_u8` + `vaesmcq_u8`
+  — identical, no drift.
+
+### The swap (R1: NOT committed to main until device KAT passes; pure fallback stays live)
+```kotlin
+// src/androidArm64Main/kotlin/ch/trancee/kemseed/Aes256Native.kt  (part-2b HW, DRAFT)
+actual class Aes256Native actual constructor(key: ByteArray) {
+    private val sched = Aes256.expandKey(key)      // pure key schedule, host-gated (R1)
+    private val rkFlat = sched.roundKeysFlat240()   // 60 words -> 240 bytes (big-endian/word-major)
+    actual fun encryptBlock(block: ByteArray, out: ByteArray): Unit =
+        platform.Arm64CryptoCShim.aes256_enc1block(rkFlat, block, out)
+}
+// + on Aes256Key (commonMain, pure): roundKeysFlat240() — flatten IntArray(60) -> 240 bytes,
+//   byte order == addRoundKey (Aes256.kt L217-224): w[i] -> (>>24,>>16,>>8,&0xFF), word-major.
+```
+**Byte-exactness (HW ≡ pure):** `schedule` is `IntArray(60)` = 4*(NR+1) = 15 round keys (240 B).
+`addRoundKey` reads `w[wordOff + (i ushr 2)]` big-endian (`(word ushr (3-(i and 3))*8)`) →
+rk[r*16+i] = `w[r*4 + i/4]` byte `(3-(i%4))*8`, exactly the FIPS-197 round-key layout the C-shim's
+`vld1q_u8(rk + r*16)` consumes. AES state: pure `encryptRounds(target,…)` indexes `target[i]`,
+`i = row + 4*col` (NIST column-major, byte 0 = s[0,0]) ≡ arm64 `vld1q_u8` state load order →
+identical 14-round transform on identical bytes → identical ciphertext. Device KAT confirms
+empirically; host goldens (128-vector GCM Oracle + 20 NIST + 2000 GHASH) pin the pure arithmetic.
+
+### cinterop bind (UNVERIFIED on this host — needs NDK arm64 to run)
+`Arm64CryptoCShim.def` uses `cSource = Aes256_arm64.c` + `compilerOpts = -march=armv8-a+crypto`
+(cinterop compiles the `.c` into the klib, applying `+crypto` so the AES intrinsics bind). **Caveat
+from §"STILL DEFERRED":** the prior `Arm64Crypto.def` probe showed KMP cinterop's **header-parse** did
+*not* honor `compilerOpts = -march=armv8-a+crypto` (knm stayed 4859 B, no AES symbols;
+`__ARM_FEATURE_CRYPTO` unset). If cinterop's `cSource` compile inherits that same gap, the `.c`
+won't resolve `vaesseq_u8` → **fallback:** build `Aes256_arm64.a` with the NDK arm64 clang (`+crypto`)
+via a Gradle `cpp`/CMake or `Exec` task, then switch the `.def` to:
+`headers = Aes256_arm64.h` + `staticLibraries = Aes256_arm64` + `libraryPaths = <build-dir>`
+(decouples the `+crypto` compile from cinterop's header parser entirely). Resolve on an arm64-HW
+host before committing the HW `actual`.
+
+### Remaining blockers (this host)
+- NDK arm64 absent: `$ANDROID_HOME/ndk` empty; no gradle-managed NDK; the cinterop task cannot run.
+- No arm64 Android device / `arm64-v8a` system image: device KAT (2c) pending real HW; the emulator
+  is non-viable (no BLE peripheral/advertising, env-dependent `HWCAP_AES`).
