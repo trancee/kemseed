@@ -25,7 +25,7 @@ minSdk = "21"
 # deferred (ASK): the io.detekt 1.23.8 Gradle-plugin marker is unresolvable on the Plugin Portal
 # + Maven Central (303→dead `io/detekt` group; no `detekt-gradle-plugin` artifact), so its
 # version/alias is omitted from this catalog until upstream republishes the marker.
-spotless = "8.10.2"          # latest stable; Gradle-9.7-compatible (AGENTS spotless skill).
+spotless = "8.10.3"          # latest stable; Gradle-9.7-compatible (AGENTS spotless skill).
 ktfmt = "0.64"               # com.facebook:ktfmt latest on Maven Central; pinned for reproducible output.
 
 [libraries]
