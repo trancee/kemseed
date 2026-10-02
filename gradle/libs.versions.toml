@@ -5,7 +5,7 @@
 [versions]
 kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.3.0 is built with (Maven Central)
 agp = "9.4.1"
-kompact = "0.3.0"            # 0.3.0 adds `androidNativeArm64` (arm64 HW AES via D11.2) + iosSimulatorArm64
+kompact = "0.4.0"            # 0.3.0 adds `androidNativeArm64` (arm64 HW AES via D11.2) + iosSimulatorArm64
                             # klib variants — this fixes the D11.2 kompact resolution blocker
                             # (kompact 0.1.6/0.1.7 published no androidNativeArm64 variant). Built
                             # with Kotlin 2.4.20 → klib-metadata compatible (no toolchain bump).
