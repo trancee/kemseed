@@ -3,7 +3,7 @@
 # Re-evaluate held versions every sprint (per AGENTS.md Kotlin toolchain guidance).
 
 [versions]
-kotlin = "2.4.20"            # aligned to the Kotlin that kompact 0.3.0 is built with (Maven Central)
+kotlin = "2.4.21"            # aligned to the Kotlin that kompact 0.3.0 is built with (Maven Central)
 agp = "9.4.1"
 kompact = "0.3.0"            # 0.3.0 adds `androidNativeArm64` (arm64 HW AES via D11.2) + iosSimulatorArm64
                             # klib variants — this fixes the D11.2 kompact resolution blocker
